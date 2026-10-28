@@ -1208,7 +1208,7 @@ function tabsUl(items, active) {
 const slug = s => s.toLowerCase().replace(/\s+/g, '-');
 const ROLE_TABS = [['Factory','Factories'],['Freight forwarder','Freight forwarders'],['Customs broker','Customs brokers'],['Drayage carrier','Drayage carriers'],['LTL carrier','LTL carriers'],['Warehouse','Warehouses']];
 const custStatus = c => !c.onboarded ? 'onboarding' : pos.some(p => p.customer === c.id) ? 'active' : 'inactive';
-const CUST_TABS = [['customers','All customers'],['customers-active','Active'],['customers-onboarding','Onboarding'],['customers-inactive','Inactive']];
+const CUST_TABS = [['customers','All customers'],['customers-active','Active'],['customers-onboarding','Onboarding'],['customers-inactive','Inactive'],['customers-reps','By salesperson']];
 const CONTACT_TABS = [['contacts','All contacts'],['contacts-customers','Customer contacts'],['contacts-vendors','Vendor contacts']];
 const CO_TABS = [['changes','Pending','pending','warning'],['changes-approved','Approved','approved','success'],['changes-modified','Modified','modified','primary'],['changes-rejected','Rejected','rejected','danger']];
 const dateInput = id => `<input type="date" class="form-control form-control-sm mono" id="${id}" min="${iso(TODAY)}" style="max-width:11rem">`;
@@ -1543,20 +1543,45 @@ function viewShipEdit(sid) {
   </div><div class="show-sidebar">${poSidebar(p, c)}</div></div>`;
 }
 
+/* Alan's ask from Oct 23: hold salespeople accountable for how clean their orders arrive and how much they change.
+   Account numbers come from each rep's customers; order numbers come from the orders each rep handled. */
+const reps = () => [...new Set([...customers.map(c => c.rep), ...pos.map(p => p.rep)])].sort();
+function repStats(r) {
+  const cs = customers.filter(c => c.rep === r), ps = pos.filter(p => p.rep === r), sh = ps.flatMap(p => shipsOf(p.id));
+  return {
+    customers: cs.length,
+    completeness: cs.length ? Math.round(cs.reduce((a, c) => a + c.completeness, 0) / cs.length) : null,
+    cos90: cs.reduce((a, c) => a + c.cos90, 0),
+    open: ps.filter(p => !shipsOf(p.id).every(isDelivered)).length,
+    queued: ps.filter(p => p.lane === 'queue').length,
+    undated: sh.filter(s => !s.needBy).length,
+    pending: changes.filter(c => c.status === 'pending' && ((c.po && po(c.po).rep === r) || (!c.po && c.target && cust(c.target) && cust(c.target).rep === r))).length,
+    forwarded: intake.filter(i => i.flags.some(f => /sent by sales rep/i.test(f)) && i.link && po(i.link) && po(i.link).rep === r).length,
+    overrides: ps.reduce((a, p) => a + p.gate.filter(g => g[3] === 'over').length, 0),
+  };
+}
+function repsTable() {
+  const num = (v, bad) => `<td class="num ${bad ? 'text-danger' : ''}">${v}</td>`;
+  return `<div class="data-table-wrapper"><div class="table-responsive"><table class="table table-hover"><thead><tr><th>Salesperson</th><th class="num">Customers</th><th class="num">PO completeness</th><th class="num">Changes / 90d</th><th class="num">Open orders</th><th class="num">In queue</th><th class="num">Need-by missing</th><th class="num">Changes pending</th><th class="num">POs they forwarded</th><th class="num">Overrides</th></tr></thead><tbody>
+    ${reps().map(r => { const x = repStats(r); return `<tr class="link" onclick="T.custFilter='${esc(r)}';go('customers')"><td class="item-name">${esc(r)}<div class="item-sub">${customers.filter(c => c.rep === r).map(c => esc(c.name)).join(', ') || 'no accounts'}</div></td>${num(x.customers)}${num(x.completeness == null ? '—' : x.completeness + '%', x.completeness != null && x.completeness < 50)}${num(x.cos90, x.cos90 >= 10)}${num(x.open)}${num(x.queued)}${num(x.undated, x.undated >= 3)}${num(x.pending)}${num(x.forwarded, x.forwarded > 0)}${num(x.overrides, x.overrides > 0)}</tr>`; }).join('')}
+  </tbody></table></div>${tableFooter(reps().length, 'salespeople')}</div>
+  <p class="item-sub mt-2">PO completeness and changes / 90d come from each rep's accounts; the other columns count the orders each rep handled. "POs they forwarded" counts POs that came from the rep instead of the customer. Red marks a number worth a conversation. Click a row to see that rep's customers.</p>`;
+}
 function viewCustomers(tab) {
   const rows = customers.filter(c => (!tab || custStatus(c) === tab) && (T.custFilter === 'all' || c.rep === T.custFilter) && matches(c.name, c.hq, c.contact, c.rep));
   if (T.custSort === 'name') rows.sort(byName('name'));
   if (T.custSort === 'completeness') rows.sort((a, b) => a.completeness - b.completeness);
   if (T.custSort === 'changes') rows.sort((a, b) => b.cos90 - a.cos90);
   const tools = searchBox('Search customers…') + filterTool('custFilter', [['all','All reps'], ...[...new Set(customers.map(c => c.rep))].map(r => [r, 'Rep: ' + r])]) + sortTool('custSort', [['default','Default order'],['name','Name A–Z'],['completeness','PO completeness, lowest first'],['changes','Most change requests']]);
-  const tabs = tabsUl(CUST_TABS.map(t => [t[0], t[1], t[0] === 'customers' ? customers.length : customers.filter(c => custStatus(c) === t[0].slice(10)).length, t[0] === 'customers-onboarding' ? 'warning' : t[0] === 'customers-active' ? 'success' : 'secondary']), tab ? 'customers-' + tab : 'customers');
+  const tabs = tabsUl(CUST_TABS.map(t => [t[0], t[1], t[0] === 'customers' ? customers.length : t[0] === 'customers-reps' ? reps().length : customers.filter(c => custStatus(c) === t[0].slice(10)).length, t[0] === 'customers-onboarding' ? 'warning' : t[0] === 'customers-active' ? 'success' : 'secondary']), tab ? 'customers-' + tab : 'customers');
   const desc = { active:'Onboarded and holding at least one open order.', onboarding:'First order received; account package, credit, preliminary notice, or tax status still open.', inactive:'Onboarded with no open orders. Standing emails pause until the next PO.' }[tab] || 'Who we sell to, what they owe us, and how clean their orders arrive. Matched against the customer list export until the new system lands in February.';
+  if (tab === 'reps') return pageHeader('Customers', 'Companies that buy from Surface Edge.') + pageNav(tabs, '') + tabDesc('Each salesperson\'s accounts and the orders they handled: how complete POs arrive, how often they change, and what is still missing.') + repsTable();
   return pageHeader('Customers', 'Companies that buy from Surface Edge.', `<button class="btn btn-primary btn-sm" onclick="act.stub('<b>Prototype.</b> New customer form would open here.')"><i class="bi bi-plus-lg me-1"></i> New customer</button>`) + pageNav(tabs, tools) + tabDesc(desc) +
   `<div class="data-table-wrapper"><div class="table-responsive"><table class="table table-hover"><thead><tr><th>Customer</th><th>Contact</th><th class="num">Active</th><th class="num">Queued</th><th class="num">Open changes</th><th class="num">PO completeness</th><th class="num">Changes / 90d</th><th>Status</th></tr></thead><tbody>
     ${rows.map(c => { const cp = pos.filter(p => p.customer === c.id); return `<tr class="link" onclick="go('customer-${c.id}')"><td class="item-name"><a href="#customer-${c.id}">${esc(c.name)}</a><div class="item-sub">${esc(c.hq)} · rep ${esc(c.rep)}</div></td><td>${esc(c.contact)}</td><td class="num">${cp.filter(p=>p.lane==='production').length}</td><td class="num">${cp.filter(p=>p.lane==='queue').length}</td><td class="num">${companyChanges(c.id).filter(x=>x.status==='pending').length}</td><td class="num">${c.completeness}%</td><td class="num">${c.cos90}</td><td>${{ active: sb('active', 'Active'), onboarding: sb('pending', 'Onboarding'), inactive: sb('inactive', 'Inactive') }[custStatus(c)]}</td></tr>`; }).join('')}
     ${rows.length ? '' : '<tr><td colspan="8" class="empty">No customers match.</td></tr>'}
   </tbody></table></div>${tableFooter(rows.length, 'customers')}</div>
-  <p class="item-sub mt-2">PO completeness: share of required fields present when the PO first arrived. Changes / 90d: change requests received in the last 90 days. Both are also available per salesperson.</p>`;
+  <p class="item-sub mt-2">PO completeness: share of required fields present when the PO first arrived. Changes / 90d: change requests received in the last 90 days. Both are also <a href="#customers-reps">broken out by salesperson</a>.</p>`;
 }
 const contactRow = (ct, opts = {}) => actionItem(ct.status === 'left' ? 'crit' : ct.primary ? 'good' : 'muted',
   `<a href="#contact-${ct.id}" class="text-decoration-none">${esc(ct.name)}</a> <span class="text-body-secondary fw-normal">· ${esc(ct.title)}</span>${ct.primary ? ' ' + sb('active', 'Primary') : ''}${ct.status === 'left' ? ' ' + sb('danger', 'Left') : ''}${opts.company ? ` <span class="text-body-secondary fw-normal">· <a href="${companyLink(company(ct.company))}" class="text-decoration-none">${esc(company(ct.company).name)}</a></span>` : ''}`,
