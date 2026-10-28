@@ -358,6 +358,10 @@ a.stat-card .stat-link{font-size:12px;color:var(--accent);margin-top:8px;display
 .ms li.future .n{color:var(--text-muted);font-weight:400}
 .ms .dt{font-family:var(--bs-font-monospace);font-size:12px;color:var(--text-faint)}
 .ms li.done .dt{color:var(--text-2)}
+.ms li.step{padding:2px 0}
+.ms li.step .k{width:10px;height:10px;margin-left:4px}
+.ms li.step .n{font-size:12px;font-weight:400}
+.ms li.step .dt{font-size:11px}
 
 /* ── Forecast bars ── */
 .bar-row{display:flex;align-items:center;gap:12px;margin-bottom:6px}
@@ -864,8 +868,8 @@ function shipByDate(s) { if (s.type !== 'container' || !s.needBy) return null; r
 /* Days a container placed early is held back so it ships on its ship-by date instead of as soon as it can be made. */
 function holdDays(s) {
   const sb = s.placedAt && !s.actual[2] && !(s.booking && s.booking.etd) ? shipByDate(s) : null; if (!sb) return 0;
-  const ready = s.actual[1] ? d(s.actual[1]) : addDays(s.placedAt, C.production);
-  return Math.max(0, diffDays(sb, addDays(ready, C.loadout)));
+  const ready = s.actual[1] ? d(s.actual[1]) : addDays(s.placedAt, durations(s)[1]);
+  return Math.max(0, diffDays(sb, addDays(ready, durations(s)[2])));
 }
 /* A confirmed booking sets departure and port arrival until the actual dates are recorded. */
 const bookedDate = (s, i) => (s.booking && { 2: s.booking.etd, 3: s.booking.eta }[i]) || null;
@@ -954,6 +958,7 @@ const done = new Set();
 function nextActions() {
   const a = [];
   changes.filter(c => c.status === 'pending').forEach(c => a.push({ id:c.id, k:'info', t:`Review change request ${c.id} (${c.context.toLowerCase()})`, d:`${c.type} on ${coTarget(c).label} · ${c.from} → ${c.to}`, link:'changes', open:true }));
+  shipments.filter(s => s.placedAt && !isDelivered(s)).forEach(s => steps(s).filter(x => x.due && x.key !== 'pickedUp').forEach(x => a.push({ id:`overdue-${x.key}-${s.id}`, k:'warn', t:x.key === 'proforma' ? `Ask the mill for the proforma on ${s.name} of ${po(s.po).job}` : `Ask for the arrival notice on ${s.name} of ${po(s.po).job}`, d:x.key === 'proforma' ? `Placed ${fmt(s.placedAt)}; the proforma usually comes back within ${C.proforma} days.` : `It reaches ${s.port} ${fmt(milestones(s)[3].date)}, and the forwarder sends the notice 4 to 7 business days ahead.`, link:'po-'+s.po.slice(3), btn:'Approve: ask for it', toast:x.key === 'proforma' ? 'Asked the mill for the proforma.' : `Asked ${s.forwarder ? vendor(s.forwarder).name : 'the forwarder'} for the arrival notice.` })));
   shipments.filter(s => !s.placedAt && s.needBy).forEach(s => { const h = health(s);
     if (h.k === 'crit' || h.k === 'warn') a.push({ id:'place-'+s.id, k:h.k, t:`Place ${s.name} of ${po(s.po).job} with ${s.origin}`, d:s.asap ? `ASAP on the customer's PO. Placed today, it delivers ${fmt(eta(s))}.` : h.k === 'crit' ? `Place-by date passed. Earliest delivery now ${fmt(addDays(TODAY, totalDays(s)))} against need-by ${fmt(s.needBy)}.` : `Last day to place and still make ${fmt(s.needBy)} is ${fmt(placeBy(s))}.`, link:'po-'+s.po.slice(3), btn:'Approve: place order', toast:`Factory PO drafted for ${s.name}. Ryan to send to ${s.origin}.` }); });
   shipments.filter(s => s.placedAt && s.needBy && !isDelivered(s) && diffDays(eta(s), s.needBy) > 0).forEach(s => a.push({ id:'late-'+s.id, k:'crit', t:`Tell ${cust(po(s.po).customer).name}: ${s.name} will arrive ${fmt(eta(s))}`, d:`${po(s.po).job} · need-by ${fmt(s.needBy)} · ${diffDays(eta(s), s.needBy)} days late. Offer stock from Wanke Georgia to start.`, link:'po-'+s.po.slice(3), btn:'Approve: send notice', toast:`Late notice sent to ${cust(po(s.po).customer).contact}, flagged "Action required".` }));
@@ -1108,6 +1113,7 @@ const act = {
     const dlWas = s.delivery || { name:'', phone:'', site:'Job site', dock:false, forklift:false, rules:[] };
     if (JSON.stringify(dl) !== JSON.stringify(dlWas)) { changed.push(dl.name ? `delivery contact → ${dl.name}` : 'delivery details'); s.delivery = dl.name || dl.phone ? dl : null; }
     const pl = v('placed') || null; if (pl !== s.placedAt) { changed.push(`placed ${s.placedAt ? fmt(s.placedAt) : 'not placed'} → ${pl ? fmt(pl) : 'not placed'}`); s.placedAt = pl; if (pl && s.stage < 0) s.stage = 0; if (!pl) { s.stage = -1; s.actual = {}; } }
+    Object.keys(STEP_NAMES).forEach(k => { const el = document.getElementById('f-step-' + k); if (!el) return; const val = el.value || null; s.steps = s.steps || {}; if (val !== (s.steps[k] || null)) { changed.push(`${STEP_NAMES[k].toLowerCase()} ${val ? fmt(val) : 'cleared'}`); s.steps[k] = val; } });
     if (!changed.length) { toast('No changes to save.'); return; }
     p.activity.push([iso(TODAY), `${s.name}: ${changed.join('; ')}. Milestones recalculated.`]);
     openShips.add(s.id); toast(`<b>Saved.</b> ${changed.length} change${changed.length > 1 ? 's' : ''} to ${esc(s.name)}; milestones recalculated.`); go('po-' + p.id.slice(3));
@@ -1245,10 +1251,30 @@ const CO_TABS = [['changes','Pending','pending','warning'],['changes-approved','
 const dateInput = id => `<input type="date" class="form-control form-control-sm mono" id="${id}" min="${iso(TODAY)}" style="max-width:11rem">`;
 const matches = (...parts) => !q || parts.join(' ').toLowerCase().includes(q);
 
+/* Steps between milestones, from purchasing's list (Oct 28). They show whether each hand-off happened, on office pages only; the customer
+   portal keeps the six milestones. Proforma: C.proforma days after placing. Arrival notice: C.arrivalNotice days before port arrival (the
+   forwarder sends it 4 to 7 business days ahead). Picked up: when the truck leaves the port, its driving days before delivery or the warehouse stop. */
+Object.assign(C, { proforma: 3, arrivalNotice: 7 });
+const STEP_NAMES = { proforma:'Proforma received', arrivalNotice:'Arrival notice', pickedUp:'Picked up from port' };
+const STEP_DATES = { S1:{ proforma:'2026-06-02', arrivalNotice:'2026-08-20', pickedUp:'2026-09-15' }, S2:{ proforma:'2026-07-21', arrivalNotice:'2026-10-13' }, S3:{ proforma:'2026-09-21' }, S5:{ proforma:'2026-08-25' }, S6:{ proforma:'2026-08-25' }, S7:{ proforma:'2026-09-09' } };
+shipments.forEach(s => { s.steps = { ...STEP_DATES[s.id] }; });
+function steps(s) {
+  if (s.type !== 'container' || !s.placedAt) return [];
+  const m = milestones(s), stop = m[s.via ? m.length - 2 : m.length - 1], rec = s.steps || {};
+  return [['proforma', 0, addDays(m[0].date, C.proforma)], ['arrivalNotice', 2, addDays(m[3].date, -C.arrivalNotice)], ['pickedUp', 4, addDays(stop.date, -(s.via ? C.drayage : legDays(s)))]]
+    .map(([key, after, plan]) => ({ key, after, name: STEP_NAMES[key], date: rec[key] ? d(rec[key]) : plan, recorded: !!rec[key], passed: !rec[key] && !!m[after + 1].done, due: !rec[key] && !m[after + 1].done && plan < TODAY }));
+}
+/* The proforma is the one step that moves the plan. Production's 45 days start once the mill's proforma is approved (Oct 28), not when the
+   order goes out, so production counts from the recorded proforma date, or from C.proforma days after placing until one is recorded. */
+const proformaWait = s => s.placedAt && s.steps && s.steps.proforma ? Math.max(0, diffDays(s.steps.proforma, s.placedAt)) : C.proforma;
+const legsFromPlacing = durations;
+durations = s => { const dur = legsFromPlacing(s); if (s.type === 'container') dur[1] = proformaWait(s) + dur[1]; return dur; };
+
 function msList(s, hideDates) {
-  const m = milestones(s);
+  const m = milestones(s), st = isPortal() ? [] : steps(s);
+  const stepLi = x => `<li class="step ${x.recorded || x.passed ? 'done' : 'future'} ${x.due ? 'late' : ''}"><span class="k"></span><span class="n">${esc(x.name)}</span><span class="dt ${x.due ? 'text-danger' : ''}">${x.recorded ? fmt(x.date) : x.passed ? 'not recorded' : x.due ? `due ${fmt(x.date)}, not recorded` : 'est. ' + fmt(x.date)}</span></li>`;
   return `<ul class="ms">${m.map(x => { const last = x.i === m.length - 1; const late = !x.done && s.needBy && last && diffDays(x.date, s.needBy) > 0; const hide = hideDates && !x.done && !last;
-    return `<li class="${x.done?'done':''} ${x.now?'now':''} ${(!x.done && !x.now)?'future':''} ${late || x.overdue ?'late':''}"><span class="k"></span><span class="n">${esc(x.name)}</span><span class="dt ${x.overdue && !hide ? 'text-danger' : ''}">${hide ? '—' : x.overdue ? `due ${fmt(x.due)}, not recorded` : (x.actual ? '' : (s.placedAt || s.needBy ? 'est. ' : '')) + fmt(x.date)}</span></li>`; }).join('')}</ul>`;
+    return `<li class="${x.done?'done':''} ${x.now?'now':''} ${(!x.done && !x.now)?'future':''} ${late || x.overdue ?'late':''}"><span class="k"></span><span class="n">${esc(x.name)}</span><span class="dt ${x.overdue && !hide ? 'text-danger' : ''}">${hide ? '—' : x.overdue ? `due ${fmt(x.due)}, not recorded` : (x.actual ? '' : (s.placedAt || s.needBy ? 'est. ' : '')) + fmt(x.date)}</span></li>` + st.filter(y => y.after === x.i).map(stepLi).join(''); }).join('')}</ul>`;
 }
 
 const bookingNote = s => `<div class="item-sub mt-2"><i class="bi bi-calendar-check me-1"></i>Booked <span class="mono">${esc(s.booking.ref)}</span>, confirmed ${fmt(s.booking.confirmed)}${s.booking.vessel ? ` · ${esc(s.booking.vessel)}` : ''}${s.booking.container ? ` · container <span class="mono">${esc(s.booking.container)}</span>` : ''} · ETD ${fmt(s.booking.etd)} · ETA ${esc(s.port)} ${fmt(s.booking.eta)}</div>`;
@@ -1789,6 +1815,7 @@ function viewShipEdit(sid) {
       <div class="col-md-6 d-flex align-items-end gap-4"><div class="form-check"><input class="form-check-input" type="checkbox" id="f-dl-dock" ${s.delivery?.dock ? 'checked' : ''}><label class="form-check-label small" for="f-dl-dock">Dock door</label></div><div class="form-check"><input class="form-check-input" type="checkbox" id="f-dl-forklift" ${s.delivery?.forklift ? 'checked' : ''}><label class="form-check-label small" for="f-dl-forklift">Forklift</label></div></div>
       <div class="col-12"><label class="form-label small" for="f-dl-rules">Delivery rules, one per line</label><textarea class="form-control form-control-sm" id="f-dl-rules" rows="3">${esc((s.delivery?.rules || []).join('\n'))}</textarea></div>
     </div>`)}
+    ${s.type === 'container' && s.placedAt ? detailCard('Steps between milestones', 'record each as it happens', `<div class="row g-3">${steps(s).map(x => field(x.name, txt('f-step-' + x.key, (s.steps || {})[x.key] || '', 'date'))).join('')}</div>`) : ''}
     ${detailCard('What saving changes', '', `<div style="font-size:13px;color:var(--text-2);line-height:1.6">Changing the need-by, origin, port, or placed date recalculates every milestone from the lead times in Constraints. The customer sees the new dates in their portal${c.showLeadTimes ? '' : ' (lead times are hidden for this customer, so only the need-by and status)'}. Changing the kind switches between the ocean and domestic milestone chains. Renaming is cosmetic and logged.</div>`)}
     ${detailCard('Milestones at current values', '', msList(s))}
   </div><div class="show-sidebar">${poSidebar(p, c)}</div></div>`;
