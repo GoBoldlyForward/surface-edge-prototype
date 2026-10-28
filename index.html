@@ -1257,6 +1257,49 @@ function shipCard(s, opts = {}) {
 }
 
 /* ---------- views: back office ---------- */
+/* The weekly team summary from the scope page: "the team sees what is late or coming due, and a weekly summary of it goes to
+   the people who need it." Built from the order record every Monday; nobody types it. */
+Object.assign(C, { teamSummaryDays: 7 });
+let summaryShown = false;
+const summaryTo = () => Object.values(TEAM);
+const SUMMARY_MS = { 'Placed with factory':'placement', 'Production complete':'production finish', 'Departed origin port':'departure', 'Arrived US port':'port arrival', 'Cleared customs':'customs clearance', 'Delivered':'delivery', 'Released to warehouse':'release', 'Picked':'pick', 'Shipped':'pickup' };
+const msWord = name => SUMMARY_MS[name] || (/^At /.test(name) ? 'warehouse arrival' : name.toLowerCase());
+function weeklySummary() {
+  const end = addDays(TODAY, 7), within = dt => dt >= TODAY && dt < end, live = shipments.filter(s => !isDelivered(s)), label = s => `${po(s.po).job} · ${s.name}`;
+  const late = live.filter(s => health(s).k === 'crit').map(s => [label(s), health(s).t, s.po]);
+  const unconfirmed = live.filter(s => s.placedAt && overdueMs(s)).map(s => { const m = overdueMs(s); return [label(s), `${msWord(m.name)} was due ${fmt(m.due)}; nothing recorded`, s.po]; }).concat(live.filter(bookingLate).map(s => [label(s), `booking request was due ${fmt(bookingBy(s))}; no booking recorded`, s.po]));
+  const coming = [
+    ...live.filter(s => s.placedAt && !overdueMs(s)).map(s => ({ s, m: nextMs(s) })).filter(x => x.m && within(x.m.date)).map(x => [label(x.s), `${msWord(x.m.name)} ${fmt(x.m.date)}`, x.s.po, x.m.date]),
+    ...live.filter(s => !s.placedAt && !s.hold && placeBy(s) && within(placeBy(s))).map(s => [label(s), `place with ${s.origin.split(',')[0]} by ${fmt(placeBy(s))}`, s.po, placeBy(s)]),
+    ...live.filter(s => s.type === 'container' && s.placedAt && s.stage < 2 && !s.booking && within(bookingBy(s))).map(s => [label(s), `request a booking by ${fmt(bookingBy(s))}`, s.po, bookingBy(s)]),
+  ].sort((a, b) => a[3] - b[3]);
+  const waiting = pos.map(p => { const sh = shipsOf(p.id), owed = [...p.gate.filter(g => g[3] === 'pending' && g[2] === 'Customer').map(g => g[1].toLowerCase()), ...(sh.some(s => !s.needBy && !s.asap) ? ['need-by dates'] : []), ...(sh.some(s => /missing/i.test(s.dest)) ? ['the ship-to address'] : [])];
+    return owed.length && sh.some(s => !s.placedAt) ? [`${cust(p.customer).name} · ${p.job}`, owed.join(', '), p.id] : null; }).filter(Boolean);
+  const decisions = changes.filter(c => c.status === 'pending').map(c => [`${c.id} ${c.type.toLowerCase()}`, coTarget(c).label, c.po || null]);
+  const delivered = shipments.filter(isDelivered).map(s => ({ s, at: milestones(s).slice(-1)[0].date })).filter(x => x.at >= addDays(TODAY, -7) && x.at <= TODAY).map(x => [label(x.s), `delivered ${fmt(x.at)}`, x.s.po]);
+  return { late, unconfirmed, coming, waiting, decisions, delivered };
+}
+function summaryModal() {
+  if (!summaryShown) return '';
+  const w = weeklySummary();
+  const sec = (title, rows, empty) => `<div style="font-size:14px;font-weight:600;color:var(--text);margin:16px 0 6px">${title}${rows.length ? ` <span class="text-body-secondary fw-normal">${rows.length}</span>` : ''}</div>${rows.length ? `<ul style="margin:0;padding-left:18px">${rows.map(r => `<li style="margin:3px 0">${r[2] ? `<a href="#po-${r[2].slice(3)}" onclick="summaryShown=false">${esc(r[0])}</a>` : esc(r[0])}: ${esc(r[1])}</li>`).join('')}</ul>` : `<div class="item-sub">${empty}</div>`}`;
+  return `<div style="position:fixed;inset:0;background:rgba(0,0,0,.55);z-index:1080;display:flex;align-items:flex-start;justify-content:center;padding:40px 16px;overflow:auto" onclick="if(event.target===this)act.summary(false)"><div class="detail-card" style="max-width:780px;width:100%;margin:0">
+    <div class="detail-card-header"><h3>Weekly summary · week of ${fmtLong(TODAY)}</h3><span class="card-note">built from the order record</span></div>
+    <div class="detail-card-body"><div class="email"><div class="hd">To: ${summaryTo().map(esc).join(', ')} · ${C.teamSummaryDays === 7 ? 'every Monday' : `every ${C.teamSummaryDays} days`} at 7:00 am</div>
+      ${sec('Late or at risk', w.late, 'Nothing is late against its need-by date.')}
+      ${sec('Overdue', w.unconfirmed, 'Nothing is overdue.')}
+      ${sec('Coming up in the next 7 days', w.coming, 'Nothing comes due this week.')}
+      ${sec('Waiting on customers', w.waiting, 'No customer owes us anything.')}
+      ${sec('Decisions waiting on us', w.decisions, 'No change requests are waiting.')}
+      ${sec('Delivered in the last 7 days', w.delivered, 'Nothing was delivered in the last 7 days.')}
+    </div></div>
+    <div class="detail-card-footer d-flex justify-content-between align-items-center gap-2 flex-wrap"><span>Goes out on the cadence in Constraints. Each line links to its order.</span><div class="d-flex gap-2"><button class="btn btn-sm btn-outline-secondary" onclick="act.summary(false)">Close</button><button class="btn btn-sm btn-primary" onclick="act.summarySend()"><i class="bi bi-send me-1"></i>Send now</button></div></div>
+  </div></div>`;
+}
+Object.assign(act, {
+  summary(open) { summaryShown = open; render(); },
+  summarySend() { summaryShown = false; toast(`<b>Weekly summary sent</b> to ${summaryTo().map(esc).join(', ')}.`); render(); },
+});
 /* ---------- Dashboard: Overview (glance), To do (work queue), Feed (what happened) ---------- */
 const DASH_TABS = [['today','Overview'],['todo','To do'],['feed','Feed']];
 /* One rule for To do counts everywhere: red with the blocking count when anything blocks production, otherwise yellow with everything waiting. */
@@ -1364,7 +1407,7 @@ function viewToday() {
   return dashHeader() + pageNav(dashTabs('today'), '') +
   `<div class="stat-cards">${statCard('Shipments in production', inProd, 'box-seam', 'blue', { route:'orders-production', group:'shipment', label:'Production shipments' })}${statCard('Shipments queued', queued, 'hourglass-split', 'gray', { route:'orders-queue', group:'shipment', label:'Queued shipments' })}${statCard('Need-by dates unknown', unknown, 'calendar-x', 'amber', { route:'orders-queue', group:'shipment', label:'Queue by shipment' })}${statCard('At risk of missing need-by', atRisk, 'exclamation-triangle', atRisk ? 'red' : 'green', { route:'orders-production', group:'shipment', label:'Production by shipment' })}${statCard('Change requests pending', pendingCO, 'arrow-left-right', pendingCO ? 'amber' : 'green', { route:'todo-decisions', label:'Decisions in To do' })}</div>
   <div class="dashboard-grid mb-3">
-    <div class="detail-card"><div class="detail-card-header"><h3>Needs attention in production</h3><a class="card-action" href="#orders-production" onclick="openAttention()">View all ${attention.length}</a></div>
+    <div class="detail-card"><div class="detail-card-header"><h3>Needs attention in production</h3><div class="d-flex gap-3"><a class="card-action" href="#today" onclick="event.preventDefault();act.summary(true)"><i class="bi bi-envelope-paper me-1"></i>Weekly summary</a><a class="card-action" href="#orders-production" onclick="openAttention()">View all ${attention.length}</a></div>${summaryModal()}</div>
       <ul class="action-list">${attention.length ? attention.slice(0, 5).map(s => { const n = nextMs(s); return actionItem(health(s).k, `<a href="#po-${s.po.slice(3)}" class="text-decoration-none">${esc(po(s.po).job)}</a> <span class="text-body-secondary fw-normal">· ${esc(s.name)}</span>`, `${esc(stageName(s))}${n ? ` → next: ${esc(n.name)} <span class="mono">${fmt(n.date)}</span>` : ''}`, pill(health(s))); }).join('') : '<li class="empty">Every placed shipment is on track.</li>'}</ul></div>
     <div class="detail-card"><div class="detail-card-header"><h3>To do</h3><a class="card-action" href="#todo">Open to do</a></div>
       <ul class="meta-list px-3">${TODO_TYPES.map(t => { const n = acts.filter(a => a.type === t[0]).length; const crit = acts.some(a => a.type === t[0] && a.k === 'crit'); return `<li class="meta-item"><a class="meta-label text-decoration-none" href="#todo-${t[0]}">${t[1]}</a><span class="meta-value">${n ? `<span class="badge ${crit ? 'bg-danger' : 'bg-warning text-dark'}">${n}</span>` : '<span class="text-body-secondary fw-normal">—</span>'}</span></li>`; }).join('')}</ul>
@@ -2038,7 +2081,7 @@ function viewSettings() {
   ${detailCard('Ocean transit from Korea by US port (days)', 'median of the order history', grid(Object.keys(C.ocean).map(p => f(p, 'ocean', p, OCEAN_HISTORY[p])).join('')))}
   ${detailCard('Domestic from Wanke warehouse (days)', '', grid(f('Pick','pick') + f('Ground to job site','ground')))}
   ${detailCard('Last leg by distance (days)', 'local uses drayage above', grid(f('Regional, 150 to 500 miles','legRegional') + f('Long haul, over 500 miles','legLong') + f('Warehouse release before the truck','release')))}
-  ${detailCard('Communication cadence (days)', '', grid(f('Reminder for missing info, every','reminderDays') + f('"Stop us or it ships" before departure','stopUsDays') + f('Customer standing email, every','standingEmailDays')))}
+  ${detailCard('Communication cadence (days)', '', grid(f('Reminder for missing info, every','reminderDays') + f('"Stop us or it ships" before departure','stopUsDays') + f('Customer standing email, every','standingEmailDays') + f('Team summary, every','teamSummaryDays')))}
   <div class="detail-card"><div class="detail-card-header"><h3>Auto-approve</h3><span class="card-note">actions people approve almost every time can run on their own</span></div>
     <ul class="action-list">${[['Send intake acknowledgement and missing-info list','100%',true],['Send reminder for missing need-by dates','98%',true],['Send departure notice 10 days before ship','96%',true],['Place with factory on go/no-go date','62%',false],['Approve customer need-by change with no production impact','81%',false]].map((r, i) => actionItem(r[2] ? 'good' : 'muted', esc(r[0]), `Approved without edits ${r[1]} of the time`, `<div class="form-check form-switch m-0"><input class="form-check-input" type="checkbox" role="switch" id="auto-${i}" ${r[2]?'checked':''} onchange="act.stub('<b>Saved.</b> ' + (this.checked ? 'Now automatic.' : 'Now needs approval.'))"><label class="form-check-label" style="font-size:13px" for="auto-${i}">${r[2]?'Automatic':'Needs approval'}</label></div>`)).join('')}</ul></div>
   </div>`;
