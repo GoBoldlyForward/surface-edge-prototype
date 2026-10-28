@@ -66,7 +66,8 @@ button.nav-link{width:100%;border:0;background:transparent;font:inherit;text-ali
 /* The extra bottom padding keeps these links clear of the Pinpoint feedback button, which sits 20px from the bottom-left corner. */
 .sidebar-bottom{padding:10px 10px 78px;border-top:1px solid rgba(255,255,255,.07)}
 .sidebar .btn-close{filter:invert(1) grayscale(100%) brightness(200%)}
-@media (max-width:767.98px){.sidebar{padding-top:0}}
+/* On phones the sidebar is a Bootstrap offcanvas, so it needs Bootstrap's offcanvas z-index (1045) to sit above the backdrop (1040). The z-index on .sidebar above is for desktop and would leave the open menu under the backdrop. */
+@media (max-width:767.98px){.sidebar{padding-top:0;z-index:1045}}
 
 /* ── Main / Topbar ── */
 .main-content{margin-left:var(--sidebar-width);min-height:100vh;display:flex;flex-direction:column}
