@@ -1778,6 +1778,39 @@ const contactRow = (ct, opts = {}) => actionItem(ct.status === 'left' ? 'crit' :
   ct.status === 'active' && !ct.primary ? `<button class="btn btn-sm btn-outline-secondary" onclick="act.setPrimary('${ct.id}')">Make primary</button>` : '');
 const companyChanges = id => changes.filter(c => c.target === id || (c.po && po(c.po).customer === id) || (c.ship && vendorRoleOn(id, ship(c.ship))));
 
+/* Open-order export per customer, from the scope page. One row per shipment not yet delivered. The team copy has every
+   reference; the customer copy drops the internal ones (Navigator order, factory PO, our status notes) so it can be sent as is. */
+let exportOpen = null;   // the customer whose export preview is open
+const EXPORT_COLS = [
+  ['Order', s => s.po, 'team'], ['Job', s => po(s.po).job], ['Job #', s => po(s.po).jobNo || ''], ['Customer PO', s => s.custPO || po(s.po).custPO || ''], ['Sidemark', s => s.sidemark || ''],
+  ['Shipment', s => s.name], ['Kind', s => s.type === 'container' ? 'Ocean container' : 'LTL / pallet'], ['Sq ft', s => s.sqft], ['Need-by', s => s.asap ? 'ASAP' : s.needBy ? fmtLong(s.needBy) : 'To be confirmed'],
+  ['Stage', s => stageName(s)], ['Status', s => health(s).t, 'team'], ['Mill ships by', s => shipByDate(s) && !s.actual[2] ? fmtLong(shipByDate(s)) : '', 'team'],
+  ['Est. delivery', s => s.placedAt || s.needBy ? fmtLong(eta(s)) : ''], ['Navigator order', s => s.erpOrder || '', 'team'], ['Factory PO', s => s.factoryPO || '', 'team'],
+  ['Booking', s => (s.booking && s.booking.ref) || ''], ['Container', s => (s.booking && s.booking.container) || ''],
+];
+const openShipsOf = custId => pos.filter(p => p.customer === custId).flatMap(p => shipsOf(p.id)).filter(s => !isDelivered(s));
+const exportCols = who => EXPORT_COLS.filter(col => who === 'team' || col[2] !== 'team');
+const csvCell = v => { const t = String(v ?? ''); return /[",\n]/.test(t) ? `"${t.replace(/"/g, '""')}"` : t; };
+function exportCsv(custId, who) { const cols = exportCols(who); return [cols.map(col => col[0]), ...openShipsOf(custId).map(s => cols.map(col => col[1](s)))].map(r => r.map(csvCell).join(',')).join('\n'); }
+function exportModal(c) {
+  if (exportOpen !== c.id) return '';
+  const rows = openShipsOf(c.id), cols = exportCols('team');
+  return `<div style="position:fixed;inset:0;background:rgba(0,0,0,.55);z-index:1080;display:flex;align-items:flex-start;justify-content:center;padding:40px 16px;overflow:auto;text-align:left" onclick="if(event.target===this)act.exportPreview('${c.id}')"><div class="detail-card" style="max-width:1440px;width:100%;margin:0">
+    <div class="detail-card-header"><h3>Open orders · ${esc(c.name)}</h3><span class="card-note">${rows.length} shipment${rows.length === 1 ? '' : 's'} not yet delivered · ${fmtLong(TODAY)}</span></div>
+    <div class="detail-card-body flush"><div class="table-responsive"><table class="table table-sm mb-0" style="font-size:12px"><thead><tr>${cols.map(col => `<th class="${col[0] === 'Sq ft' ? 'num' : ''}">${esc(col[0])}${col[2] === 'team' ? ' <span class="text-body-secondary fw-normal" title="Left out of the customer copy">*</span>' : ''}</th>`).join('')}</tr></thead><tbody>${rows.map(s => `<tr>${cols.map(col => `<td class="${col[0] === 'Sq ft' ? 'num mono' : ''}" style="white-space:nowrap">${esc(col[0] === 'Sq ft' ? s.sqft.toLocaleString() : col[1](s))}</td>`).join('')}</tr>`).join('') || `<tr><td colspan="${cols.length}" class="empty">No open shipments.</td></tr>`}</tbody></table></div></div>
+    <div class="detail-card-footer d-flex justify-content-between align-items-center gap-2 flex-wrap"><span>* Team copy only. The customer copy leaves these out.</span><div class="d-flex gap-2 flex-wrap"><button class="btn btn-sm btn-outline-secondary" onclick="act.exportPreview('${c.id}')">Close</button><button class="btn btn-sm btn-outline-secondary" onclick="act.exportDownload('${c.id}', 'team')"><i class="bi bi-download me-1"></i>Team copy (CSV)</button><button class="btn btn-sm btn-primary" onclick="act.exportDownload('${c.id}', 'customer')"><i class="bi bi-download me-1"></i>Customer copy (CSV)</button></div></div>
+  </div></div>`;
+}
+Object.assign(act, {
+  exportPreview(custId) { exportOpen = exportOpen === custId ? null : custId; render(); },
+  exportDownload(custId, who) {
+    const c = cust(custId), name = `${c.name} open orders ${iso(TODAY)}${who === 'team' ? ' (team)' : ''}.csv`.replace(/[\\/:*?"<>|]/g, '');
+    const a = document.createElement('a'); a.href = URL.createObjectURL(new Blob([exportCsv(custId, who)], { type:'text/csv' })); a.download = name; document.body.appendChild(a); a.click(); a.remove(); setTimeout(() => URL.revokeObjectURL(a.href), 1000);
+    toast(`<b>Downloaded</b> ${esc(name)}: ${openShipsOf(custId).length} open shipments.`);
+  },
+});
+
+
 /* ---------- Record pages: one pattern for orders, customers, vendors and contacts ----------
    Header with back link and actions, a status banner, a tab row (content left, tools right),
    the active tab in the main column, and a persistent side column of reference details. */
@@ -1824,7 +1857,7 @@ function viewCustomer(id, tab) {
     : tab === 'activity' ? feedRowsHtml(acts.slice(0, 60), 'No activity yet.')
     : listCard(['queue', 'production', 'complete'].flatMap(l => cp.filter(p => p.lane === l)).map(orderRow), 'No orders yet.');
   const pc = cts.find(x => x.primary);
-  return pageHeader(esc(c.name), `Customer · ${esc(c.hq)} · rep ${esc(c.rep)}`, `${c.onboarded ? sb('active', 'Onboarded') : sb('pending', 'Onboarding')}<a class="btn btn-outline-secondary btn-sm" href="#portal" onclick="act.portalCustomer('${c.id}')"><i class="bi bi-eye me-1"></i> View their portal</a><button class="btn btn-outline-secondary btn-sm" onclick="act.remind('${(firstQueued || cp[0] || {}).id || ''}')" ${firstQueued ? '' : 'disabled'}><i class="bi bi-bell me-1"></i> Send reminder</button>`, { back: 'customers' }) +
+  return pageHeader(esc(c.name), `Customer · ${esc(c.hq)} · rep ${esc(c.rep)}`, `${c.onboarded ? sb('active', 'Onboarded') : sb('pending', 'Onboarding')}<button class="btn btn-outline-secondary btn-sm" onclick="act.exportPreview('${c.id}')"><i class="bi bi-file-earmark-spreadsheet me-1"></i> Export open orders</button><a class="btn btn-outline-secondary btn-sm" href="#portal" onclick="act.portalCustomer('${c.id}')"><i class="bi bi-eye me-1"></i> View their portal</a><button class="btn btn-outline-secondary btn-sm" onclick="act.remind('${(firstQueued || cp[0] || {}).id || ''}')" ${firstQueued ? '' : 'disabled'}><i class="bi bi-bell me-1"></i> Send reminder</button>${exportModal(c)}`, { back: 'customers' }) +
     banner + pageNav(tabs, tools) +
     `<div class="show-layout"><div class="show-main">${main}</div><div class="show-sidebar">
       ${detailCard('Account', '', `<ul class="meta-list">
