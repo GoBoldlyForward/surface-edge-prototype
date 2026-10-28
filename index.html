@@ -731,16 +731,22 @@ function ackNeeds(p) {
 }
 function ackDoc(p) {
   const c = cust(p.customer), sh = shipsOf(p.id), needs = ackNeeds(p);
+  /* Like the Navigator printout: each line (with any substitution), the price we acknowledge, and per shipment the customer's references, the mill's ship-by date, the delivery date and who to call. */
+  const refs = s => [s.custPO || p.custPO ? `your PO ${s.custPO || p.custPO}` : null, s.sidemark].filter(Boolean).map(esc).join(' · ');
+  const lineRow = l => { const price = l.ackPrice || l.price, pack = l.sqft ? packOf(l.supplied || l.product, l.sqft) : null;
+    return `<tr><td>${esc(l.product)}${l.supplied ? `<div class="item-sub">Supplying ${esc(l.supplied)}${l.labelAs ? ', labeled as ordered' : ''}</div>` : ''}</td><td class="num">${l.unit ? `${l.qty.toLocaleString()} ${esc(l.unit)}` : sqft(l.sqft)}${pack ? `<div class="item-sub">${pack.cartons.toLocaleString()} cartons · ${pack.pallets} pallets${pack.extra ? ` + ${pack.extra}` : ''}</div>` : ''}</td><td class="num">${price ? `$${price.toFixed(2)}${l.ackPrice && l.ackPrice !== l.price ? `<div class="item-sub">your PO: $${l.price.toFixed(2)}</div>` : ''}` : '—'}</td></tr>`; };
+  const shipBy = s => s.asap ? 'ASAP' : s.type !== 'container' ? 'from stock' : shipByDate(s) ? fmtLong(shipByDate(s)) : '—';
+  const deliverBy = s => s.asap ? 'ASAP' : s.needBy ? fmtLong(s.needBy) + (s.requested && s.requested !== s.needBy ? `<div class="item-sub">you asked for ${fmt(s.requested)}</div>` : '') : 'to be confirmed';
   return `<div style="font-size:13px;line-height:1.55">
     <div class="d-flex justify-content-between flex-wrap gap-2 mb-3"><div><div style="font-weight:700;font-size:18px;letter-spacing:.5px">SURFACE EDGE</div><div class="item-sub">Contract flooring</div></div><div class="text-end"><div style="font-weight:600">Order acknowledgement</div><div class="item-sub mono">${p.id} · ${fmt(TODAY)}</div></div></div>
     <ul class="meta-list mb-3">
       <li class="meta-item"><span class="meta-label">Customer</span><span class="meta-value">${esc(c.name)}<div class="fw-normal text-body-secondary">${esc(c.contact)}</div></span></li>
       <li class="meta-item"><span class="meta-label">Your order</span><span class="meta-value">${esc(p.source.replace(/^PDF \(|\)$/g, ''))}, received ${fmtLong(p.received)}</span></li>
-      <li class="meta-item"><span class="meta-label">Job</span><span class="meta-value">${esc(p.job)} · ${esc(p.site)}</span></li>
-      <li class="meta-item"><span class="meta-label">Product</span><span class="meta-value">${esc(p.product)} · ${sqft(p.sqft)}</span></li></ul>
-    <div class="table-responsive"><table class="table table-sm mb-3"><thead><tr><th>Shipment</th><th class="num">Sq ft</th><th>Deliver by</th><th>Deliver to</th></tr></thead><tbody>${sh.map(s => `<tr><td>${esc(s.name)}</td><td class="num">${s.sqft.toLocaleString()}</td><td class="mono">${s.needBy ? fmtLong(s.needBy) : 'to be confirmed'}</td><td>${/missing/i.test(s.dest) ? 'to be confirmed' : esc(s.dest)}</td></tr>`).join('')}</tbody></table></div>
+      <li class="meta-item"><span class="meta-label">Job</span><span class="meta-value">${esc(p.job)}${p.jobNo ? ` (job ${esc(p.jobNo)})` : ''} · ${esc(p.site)}</span></li></ul>
+    <div class="table-responsive"><table class="table table-sm mb-3"><thead><tr><th>Item</th><th class="num">Quantity</th><th class="num">Price</th></tr></thead><tbody>${linesOf(p).map(lineRow).join('')}</tbody></table></div>
+    <div class="table-responsive"><table class="table table-sm mb-3"><thead><tr><th>Shipment</th><th class="num">Sq ft</th><th>Mill ships by</th><th>Deliver by</th><th>Deliver to</th></tr></thead><tbody>${sh.map(s => `<tr><td>${esc(s.name)}${refs(s) ? `<div class="item-sub">${refs(s)}</div>` : ''}</td><td class="num">${s.sqft.toLocaleString()}</td><td class="mono">${shipBy(s)}</td><td class="mono">${deliverBy(s)}</td><td>${/missing/i.test(s.dest) ? 'to be confirmed' : esc(s.dest)}${s.delivery ? `<div class="item-sub">${esc(s.delivery.name)} · ${esc(s.delivery.phone)}</div>` : ''}</td></tr>`).join('')}</tbody></table></div>
     ${needs.length ? `<p class="mb-2"><b>Before we place this with the factory we need</b> ${needs.map(esc).join('; ')}.</p>` : ''}
-    <p class="mb-2">Dates are delivery dates at the address shown. Changes after signature go through a change request.</p>
+    <p class="mb-2">Delivery dates are at the address shown. We ask the mill to produce for the ship-by date so each shipment arrives on its delivery date. Changes after signature go through a change request.</p>
     <p class="mb-0">Please review, sign and return within 48 hours. Agreed and accepted by: ______________________</p></div>`;
 }
 function ackCard(p) {
