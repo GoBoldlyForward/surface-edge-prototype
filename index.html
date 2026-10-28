@@ -1462,7 +1462,7 @@ function viewChanges() {
 function poSidebar(p, c) {
   const gateDone = p.gate.filter(g => g[3] !== 'pending').length;
   return `<div class="detail-card"><div class="detail-card-header"><h3>Before we can proceed</h3><span class="card-note">${gateDone} of ${p.gate.length}</span></div>
-      <ul class="check-list">${p.gate.map(g => `<li class="check-item ${g[3]==='na'?'na':''} ${g[3]==='over'?'over':''}"><input class="form-check-input" type="checkbox" disabled ${g[3]==='done'||g[3]==='over'?'checked':''} aria-label="${esc(g[1])}"><div class="check-label">${esc(g[1])}<div class="check-sub">${g[3]==='na'?'Not required':g[3]==='over'?'Overridden by Rob':g[3]==='done'?'Complete':'Waiting on ' + esc(g[2])}</div></div>${g[3]==='pending' ? `<div class="btn-group btn-group-sm"><button class="btn btn-outline-secondary" onclick="act.gate('${p.id}','${g[0]}','done')">Done</button><button class="btn btn-outline-secondary" title="Proceed without it; logged on the order" onclick="act.gate('${p.id}','${g[0]}','over')">Override</button></div>` : ''}</li>`).join('')}</ul>
+      <ul class="check-list">${p.gate.map(g => `<li class="check-item ${g[3]==='na'?'na':''} ${g[3]==='over'?'over':''}"><input class="form-check-input" type="checkbox" disabled ${g[3]==='done'||g[3]==='over'?'checked':''} aria-label="${esc(g[1])}"><div class="check-label">${esc(g[1])}<div class="check-sub">${g[3]==='na'?'Not required':g[3]==='over'?'Overridden by Rob':g[3]==='done'?'Complete':'Waiting on ' + esc(g[2]) + (g[0] === 'delivery' ? noContactNote(p) : '')}</div></div>${g[3]==='pending' ? `<div class="btn-group btn-group-sm"><button class="btn btn-outline-secondary" onclick="act.gate('${p.id}','${g[0]}','done')">Done</button><button class="btn btn-outline-secondary" title="Proceed without it; logged on the order" onclick="act.gate('${p.id}','${g[0]}','over')">Override</button></div>` : ''}</li>`).join('')}</ul>
       <div class="detail-card-footer">Override is the sanctioned version of "go ahead anyway." It is logged on the order and counted per person.</div></div>
     ${itemsCard(p)}
     ${detailCard('Source', '', `<ul class="meta-list">
@@ -2088,8 +2088,17 @@ function renderMain() {
 }
 window.addEventListener('resize', () => markClipped());
 let lastRoute = null;
+/* The "Delivery contact" checklist item follows the shipments: it ticks itself once every dated shipment has one.
+   It never un-ticks, so a contact confirmed by phone and marked Done by hand stays done. */
+const noContact = p => shipsOf(p.id).filter(s => s.needBy && !s.delivery);
+const noContactNote = p => { const n = noContact(p); return n.length ? ` · missing on ${n.map(s => s.name).join(', ')}` : shipsOf(p.id).some(s => s.needBy) ? '' : ' · once shipments have dates'; };
+function syncDeliveryGate() {
+  pos.forEach(p => { const g = p.gate.find(x => x[0] === 'delivery'); if (!g || g[3] !== 'pending') return;
+    if (shipsOf(p.id).some(s => s.needBy) && !noContact(p).length) { g[3] = 'done'; p.activity.push([iso(TODAY), 'Every dated shipment has a delivery contact. Checklist item ticked.']); } });
+}
 function render() {
   resolveNeedBy();
+  syncDeliveryGate();
   document.body.classList.toggle('portal', isPortal());
   if (!isPortal()) renderSidebar();
   if (route !== lastRoute) { q = ''; renaming = null; const side = document.getElementById('sidebar'); if (window.bootstrap) bootstrap.Offcanvas.getInstance(side)?.hide(); }
