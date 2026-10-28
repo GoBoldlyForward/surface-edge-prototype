@@ -849,8 +849,14 @@ function durations(s) {
     : [0, C.pick, 1, C.ground];
 }
 const totalDays = s => durations(s).reduce((a, b) => a + b, 0);
-/* The mill produces to a ship-by date, which the acknowledgement spells out ("produce according to needed ship by date"): the need-by minus ocean, customs and drayage. */
-function shipByDate(s) { if (s.type !== 'container' || !s.needBy) return null; return addDays(s.needBy, -durations(s).slice(3).reduce((a, b) => a + b, 0)); }
+/* The mill produces to a ship-by date, which the acknowledgement spells out ("produce according to needed ship by date"). Purchasing sets it
+   to the need-by minus 28 days for West Coast ports and minus 35 for Gulf and East Coast ports, on nearly every line of the open-PO sheet.
+   A container that stops at a warehouse keeps the leg-by-leg count, since its need-by is at the job. */
+const WEST_COAST = ['Los Angeles', 'Long Beach', 'Portland', 'Tacoma'];
+Object.assign(C, { shipByWest: 28, shipByEast: 35 });
+const afterSailDays = s => durations(s).slice(3).reduce((a, b) => a + b, 0);
+const shipByDays = s => s.via ? afterSailDays(s) : WEST_COAST.includes(s.port) ? C.shipByWest : C.shipByEast;
+function shipByDate(s) { if (s.type !== 'container' || !s.needBy) return null; return addDays(s.needBy, -shipByDays(s)); }
 /* Days a container placed early is held back so it ships on its ship-by date instead of as soon as it can be made. */
 function holdDays(s) {
   const sb = s.placedAt && !s.actual[2] && !(s.booking && s.booking.etd) ? shipByDate(s) : null; if (!sb) return 0;
@@ -1260,7 +1266,7 @@ function shipCard(s, opts = {}) {
         <div class="detail-field full-width"><div class="detail-label">Route</div><div class="detail-value">${esc(s.origin)}${s.port ? ` → ${esc(s.port)} port` : ''} → ${esc(s.dest)}</div>${opts.office ? `<div class="item-sub mt-1">${[s.originCo, s.forwarder, s.via, s.carrier].filter(Boolean).map(v => `<a href="#vendor-${v}" class="text-decoration-none">${esc(vendor(v).name)}</a> <span class="text-body-secondary">(${esc(vendorRoleOn(v, s))})</span>`).join(' · ')}</div>` : ''}</div>
         ${opts.office && refList(s).length ? `<div class="detail-field full-width"><div class="detail-label">References</div><div class="tag-list mt-1">${refList(s).map(([k, val]) => `<span class="tag">${k}<span class="mono ms-1">${esc(val)}</span></span>`).join('')}</div></div>` : ''}${opts.office ? `<div class="detail-field full-width"><div class="detail-label">Delivery</div>${deliveryHtml(s)}</div>` : ''}
         ${s.placedAt ? `<div class="detail-field"><div class="detail-label">Placed</div><div class="detail-value mono">${fmtLong(s.placedAt)}</div></div>` : `<div class="detail-field"><div class="detail-label">Place by</div><div class="detail-value mono">${pb ? fmtLong(pb) + ` <span class="text-body-secondary">(${rel(pb)})</span>` : '—'}</div></div>`}
-        ${shipByDate(s) && !s.actual[2] ? `<div class="detail-field"><div class="detail-label">Ship by</div><div class="detail-value mono">${fmtLong(shipByDate(s))}</div><div class="item-sub mt-1">${holdDays(s) ? `Placed early; the mill times production to this date` : 'Goes on the factory PO; the mill produces to it'}</div></div>` : ''}
+        ${shipByDate(s) && !s.actual[2] ? `<div class="detail-field"><div class="detail-label">Ship by</div><div class="detail-value mono">${fmtLong(shipByDate(s))}</div><div class="item-sub mt-1">${s.via ? 'Need-by less the legs through the warehouse' : `Need-by minus ${shipByDays(s)} days, the ${WEST_COAST.includes(s.port) ? 'West Coast' : 'Gulf and East Coast'} rule`}. ${holdDays(s) ? 'Placed early; the mill times production to this date' : 'Goes on the factory PO; the mill produces to it'}.${!s.via && afterSailDays(s) > shipByDays(s) ? ` The legs from ${esc(s.port)} take ${afterSailDays(s)} days, ${afterSailDays(s) - shipByDays(s)} more than the rule allows.` : ''}</div></div>` : ''}
         <div class="detail-field"><div class="detail-label">Est. delivery</div><div class="detail-value mono">${s.placedAt || s.needBy ? fmtLong(eta(s)) : '—'}</div></div>
         ${s.type === 'container' && s.placedAt && s.stage < 2 ? `<div class="detail-field full-width"><div class="detail-label">${s.bookingRequested ? 'Booking requested' : 'Request booking by'}</div><div class="detail-value mono ${bookingLate(s) || bookingStuck(s) ? 'text-danger' : ''}">${s.bookingRequested ? `${fmtLong(s.bookingRequested)} <span class="fw-normal">(${s.booking ? 'confirmed' : bookingStuck(s) ? `nothing back after ${diffDays(TODAY, s.bookingRequested)} days` : 'waiting on the forwarder'})</span>` : `${fmtLong(bookingBy(s))}${bookingLate(s) ? ` <span class="fw-normal">(${rel(bookingBy(s))}, no request recorded)</span>` : ''}${opts.office && !s.booking ? ` <button class="btn btn-link btn-sm p-0 ms-1 align-baseline" onclick="act.requestBooking('${s.id}')">Mark requested</button>` : ''}`}</div><div class="item-sub mt-1">${s.bookingRequested ? 'Planned to sail' : `${C.bookingLead} days before the planned sailing,`} ${fmt(milestones(s)[2].date)}</div></div>` : ''}
       </div>
@@ -2089,6 +2095,7 @@ function viewSettings() {
   ${detailCard('Ocean shipment legs (days)', '', grid(f('Factory production','production') + f('Production finished to sailing','loadout') + f('Production finished to sailing, ASAP orders','loadoutUrgent') + f('Booking request before sailing','bookingLead') + f('Booking comes back within','bookingBack') + f('Port clearance','clearance') + f('Drayage to destination','drayage')))}
   ${detailCard('Ocean transit from Korea by US port (days)', 'median of the order history', grid(Object.keys(C.ocean).map(p => f(p, 'ocean', p, OCEAN_HISTORY[p])).join('')))}
   ${detailCard('Domestic from Wanke warehouse (days)', '', grid(f('Pick','pick') + f('Ground to job site','ground')))}
+  ${detailCard('Ship-by date (days before the need-by)', 'purchasing\'s rule; it goes on the factory PO', grid(f('West Coast ports','shipByWest') + f('Gulf and East Coast ports','shipByEast')))}
   ${detailCard('Last leg by distance (days)', 'local uses drayage above', grid(f('Regional, 150 to 500 miles','legRegional') + f('Long haul, over 500 miles','legLong') + f('Warehouse release before the truck','release')))}
   ${detailCard('Communication cadence (days)', '', grid(f('Reminder for missing info, every','reminderDays') + f('"Stop us or it ships" before departure','stopUsDays') + f('Customer standing email, every','standingEmailDays') + f('Team summary, every','teamSummaryDays')))}
   <div class="detail-card"><div class="detail-card-header"><h3>Auto-approve</h3><span class="card-note">actions people approve almost every time can run on their own</span></div>
