@@ -63,7 +63,8 @@ button.nav-link{width:100%;border:0;background:transparent;font:inherit;text-ali
 .nav-sub .nav-link{padding:6px 12px 6px 12px;font-size:13px;position:relative}
 .nav-sub .nav-link::before{content:"";position:absolute;left:-12px;top:50%;width:8px;height:1px;background:rgba(139,143,163,.3)}
 .nav-sub .nav-link.active::before{background:var(--sidebar-active-text)}
-.sidebar-bottom{padding:10px;border-top:1px solid rgba(255,255,255,.07)}
+/* The extra bottom padding keeps these links clear of the Pinpoint feedback button, which sits 20px from the bottom-left corner. */
+.sidebar-bottom{padding:10px 10px 78px;border-top:1px solid rgba(255,255,255,.07)}
 .sidebar .btn-close{filter:invert(1) grayscale(100%) brightness(200%)}
 @media (max-width:767.98px){.sidebar{padding-top:0}}
 
@@ -2408,5 +2409,6 @@ if (route === 'orders') route = 'orders-production';
 render();
 </script>
 
+<script src="https://pinpoint-router-872952356c0f.herokuapp.com/embed/u253dTz1i9zygPbTkoVJWG8C.js" async></script>
 </body>
 </html>
