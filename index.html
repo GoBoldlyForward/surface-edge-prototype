@@ -642,7 +642,7 @@ const BOOKINGS = {
   S7: { ref:'PLX-78811', confirmed:'2026-10-09', vessel:'Golden Strait 1102E', container:null, etd:'2026-11-02', eta:'2026-12-05' },
 };
 shipments.forEach(s => { if (BOOKINGS[s.id]) s.booking = BOOKINGS[s.id]; });
-const vendorRoleOn = (v, s) => s.originCo === v ? (vendor(v).roles[0]) : s.forwarder === v ? 'Forwarder' : s.carrier === v ? 'Carrier' : null;
+const vendorRoleOn = (v, s) => s.originCo === v ? (vendor(v).roles[0]) : s.forwarder === v ? 'Forwarder' : s.carrier === v ? 'Carrier' : s.via === v ? 'Warehouse stop' : null;
 const vendorShipments = v => shipments.filter(s => vendorRoleOn(v, s));
 
 /* Orders have line items, not one product. The real paperwork shows a second product in the same container, accessories, a separate
@@ -1236,7 +1236,7 @@ function shipCard(s, opts = {}) {
       <div class="detail-grid">
         <div class="detail-field"><div class="detail-label">Quantity</div><div class="detail-value mono">${sqft(s.sqft)}</div></div>
         <div class="detail-field"><div class="detail-label">Need-by</div><div class="detail-value mono">${s.asap ? 'ASAP' : s.needBy ? fmtLong(s.needBy) : sb('pending', 'unknown')}</div>${needNote(s)}</div>
-        <div class="detail-field full-width"><div class="detail-label">Route</div><div class="detail-value">${esc(s.origin)}${s.port ? ` → ${esc(s.port)} port` : ''} → ${esc(s.dest)}</div>${opts.office ? `<div class="item-sub mt-1">${[s.originCo, s.forwarder, s.carrier].filter(Boolean).map(v => `<a href="#vendor-${v}" class="text-decoration-none">${esc(vendor(v).name)}</a> <span class="text-body-secondary">(${esc(vendorRoleOn(v, s))})</span>`).join(' · ')}</div>` : ''}</div>
+        <div class="detail-field full-width"><div class="detail-label">Route</div><div class="detail-value">${esc(s.origin)}${s.port ? ` → ${esc(s.port)} port` : ''} → ${esc(s.dest)}</div>${opts.office ? `<div class="item-sub mt-1">${[s.originCo, s.forwarder, s.via, s.carrier].filter(Boolean).map(v => `<a href="#vendor-${v}" class="text-decoration-none">${esc(vendor(v).name)}</a> <span class="text-body-secondary">(${esc(vendorRoleOn(v, s))})</span>`).join(' · ')}</div>` : ''}</div>
         ${opts.office && refList(s).length ? `<div class="detail-field full-width"><div class="detail-label">References</div><div class="tag-list mt-1">${refList(s).map(([k, val]) => `<span class="tag">${k}<span class="mono ms-1">${esc(val)}</span></span>`).join('')}</div></div>` : ''}${opts.office ? `<div class="detail-field full-width"><div class="detail-label">Delivery</div>${deliveryHtml(s)}</div>` : ''}
         ${s.placedAt ? `<div class="detail-field"><div class="detail-label">Placed</div><div class="detail-value mono">${fmtLong(s.placedAt)}</div></div>` : `<div class="detail-field"><div class="detail-label">Place by</div><div class="detail-value mono">${pb ? fmtLong(pb) + ` <span class="text-body-secondary">(${rel(pb)})</span>` : '—'}</div></div>`}
         ${shipByDate(s) && !s.actual[2] ? `<div class="detail-field"><div class="detail-label">Ship by</div><div class="detail-value mono">${fmtLong(shipByDate(s))}</div><div class="item-sub mt-1">${holdDays(s) ? `Placed early; the mill times production to this date` : 'Goes on the factory PO; the mill produces to it'}</div></div>` : ''}
