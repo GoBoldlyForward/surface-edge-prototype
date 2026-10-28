@@ -1381,7 +1381,7 @@ const ordersTabs = tab => `<ul class="nav nav-tabs">
   <li class="nav-item"><a class="nav-link ${tab==='production'?'active':''}" href="#orders-production">Production <span class="badge bg-success bg-opacity-10 text-success">${pos.filter(p=>p.lane==='production').length}</span></a></li>
   <li class="nav-item"><a class="nav-link ${tab==='complete'?'active':''}" href="#orders-complete">Complete <span class="badge bg-secondary bg-opacity-10 text-secondary">${pos.filter(p=>p.lane==='complete').length}</span></a></li></ul>`;
 
-const ordersHeader = () => pageHeader('Orders', 'Every purchase order, from arrival to final delivery and invoice.', `<button class="btn btn-outline-secondary btn-sm" onclick="act.stub('<b>Prototype.</b> Manual entry form would open here.')"><i class="bi bi-plus-lg me-1"></i> Enter a PO by hand</button>`);
+const ordersHeader = () => pageHeader('Orders', 'Every purchase order, from arrival to final delivery and invoice.', `<a class="btn btn-outline-secondary btn-sm" href="#new-po"><i class="bi bi-plus-lg me-1"></i> Enter a PO by hand</a>`);
 const TAB_DESC = {
   intake: 'Everything that arrives at <span class="mono">orders@surfaceedge.com</span>. The system reads the email and attachments, matches the customer, finds gaps, and replies before anyone touches it. New customers start their account package here.',
   queue: 'Captured but not actionable yet: waiting on a need-by date or paperwork, paused by the customer, or too far out to place with the factory.',
@@ -1390,6 +1390,152 @@ const TAB_DESC = {
 };
 const ORDER_SORTS = [['default','Default order'],['customer','Customer A–Z'],['sqft','Sq ft, largest first'],['needby','Need-by, soonest first']];
 const orderTools = () => groupTool() + filterTool('orderFilter', [['all','All customers'],['attention','Needs attention'], ...customers.map(c => [c.id, c.name])]) + sortTool('orderSort', ORDER_SORTS);
+
+/* ---------- entering an order by hand ----------
+   Phase 1 on the scope page: "A person still enters each new order, now in one place instead of five." One form takes what today
+   goes on the container cover page, the paper checklist, and the order matrix line. Navigator entry stays as it is. */
+let poDraft = null;
+const shipDraft = (n, from = {}) => ({ name:`Container ${n}`, type:'container', sqft:'', needBy:'', asap:false, origin:'daizhin', port:'Savannah', siteType:'Job site', address:'', custPO:'', sidemark:'', dlName:'', dlPhone:'', dock:false, forklift:false, ...from });
+const newDraft = () => ({ customer:'', newName:'', newCity:'', newContact:'', newEmail:'', contact:'', rep:'', custPO:'', jobNo:'', job:'', site:'', received:iso(TODAY), source:'Email with PDF',
+  lines:[{ product:'', qty:'', unit:'sq ft', price:'' }], ships:[shipDraft(1)], tax:'confirm', prelim:'file', deposit:'none', comments:'' });
+const draftGet = path => path.split('.').reduce((o, k) => o[k], poDraft);
+function draftSet(path, v) { const ks = path.split('.'); const last = ks.pop(); ks.reduce((o, k) => o[k], poDraft)[last] = v; }
+const productNames = () => [...new Set([...pos.map(p => p.product), ...Object.keys(PRODUCTS)])];
+function lineHint(i) {
+  const l = poDraft.lines[i], pk = l.unit === 'sq ft' ? packOf(l.product, Number(l.qty)) : null;
+  return pk ? `${pk.cartons.toLocaleString()} cartons · ${pk.pallets} pallets${pk.extra ? ` + ${pk.extra} carton${pk.extra > 1 ? 's' : ''} · <span class="text-danger">not a full pallet</span>` : ''}` : '';
+}
+function totalsText() {
+  const items = poDraft.lines.filter(l => l.unit === 'sq ft').reduce((a, l) => a + (Number(l.qty) || 0), 0), ships = poDraft.ships.reduce((a, s) => a + (Number(s.sqft) || 0), 0);
+  return items && items !== ships ? `<span class="text-danger">Shipments add up to ${ships.toLocaleString()} of the ${items.toLocaleString()} sq ft on the items.</span>` : ships ? `Shipments add up to ${ships.toLocaleString()} sq ft.` : '';
+}
+function viewNewPO() {
+  if (!poDraft) poDraft = newDraft();
+  const D = poDraft, isNew = D.customer === '__new', c = isNew ? null : cust(D.customer);
+  const lab = (id, text) => `<label class="form-label small" for="${id}">${text}</label>`;
+  const inp = (path, type = 'text', extra = '') => `<input class="form-control form-control-sm ${type !== 'text' ? 'mono' : ''}" id="np-${path}" type="${type}" value="${esc(draftGet(path) ?? '')}" oninput="act.np('${path}', this.value)" ${extra}>`;
+  const sel = (path, opts, rerender) => `<select class="form-select form-select-sm" id="np-${path}" onchange="act.np('${path}', this.value, ${!!rerender})">${opts.map(o => `<option value="${esc(o[0])}" ${o[0] === draftGet(path) ? 'selected' : ''}>${esc(o[1])}</option>`).join('')}</select>`;
+  const chk = (path, text) => `<div class="form-check"><input class="form-check-input" type="checkbox" id="np-${path}" ${draftGet(path) ? 'checked' : ''} onchange="act.np('${path}', this.checked, true)"><label class="form-check-label small" for="np-${path}">${text}</label></div>`;
+  const col = (w, path, label, input) => `<div class="col-md-${w}">${lab('np-' + path, label)}${input}</div>`;
+  const reps = [...new Set(customers.map(x => x.rep))].sort();
+  const origins = vendors.filter(v => v.roles.includes('Factory') || v.roles.includes('Warehouse'));
+  const order = `<div class="row g-3">
+    ${col(6, 'customer', 'Customer', sel('customer', [['', 'Pick a customer…'], ...customers.map(x => [x.id, x.name]), ['__new', 'New customer…']], true))}
+    ${isNew ? col(6, 'newName', 'Company name', inp('newName')) + col(6, 'newCity', 'City, state', inp('newCity')) + col(6, 'newContact', 'Contact for this order', inp('newContact')) + col(6, 'newEmail', 'Contact email', inp('newEmail', 'email'))
+      : c ? col(6, 'contact', 'Contact for this order', sel('contact', contactsOf(c.id).filter(x => x.status === 'active').map(x => [x.id, `${x.name} · ${x.title}`]))) : ''}
+    ${col(6, 'rep', 'Surface Edge sales rep', sel('rep', [['', '—'], ...reps.map(r => [r, r])]))}
+    ${col(6, 'custPO', 'Customer PO #', inp('custPO'))}
+    ${col(6, 'job', 'Job name', inp('job'))}
+    ${col(3, 'jobNo', 'Customer job #', inp('jobNo'))}
+    ${col(3, 'site', 'Job city, state', inp('site'))}
+    ${col(3, 'received', 'Received', inp('received', 'date'))}
+    ${col(3, 'source', 'How it came in', sel('source', ['Email with PDF', 'Email text', 'Phone', 'Other'].map(x => [x, x])))}
+  </div>`;
+  const lines = D.lines.map((l, i) => `<div class="row g-2 align-items-end ${i ? 'mt-2' : ''}">
+    <div class="col-md-5">${lab(`np-lines.${i}.product`, i ? `Item ${i + 1}` : 'Name and color')}<input class="form-control form-control-sm" id="np-lines.${i}.product" list="np-products" value="${esc(l.product)}" oninput="act.np('lines.${i}.product', this.value)"></div>
+    ${col(2, `lines.${i}.qty`, 'Quantity', inp(`lines.${i}.qty`, 'number'))}
+    ${col(2, `lines.${i}.unit`, 'Unit', sel(`lines.${i}.unit`, [['sq ft', 'sq ft'], ['pieces', 'pieces']], true))}
+    ${col(2, `lines.${i}.price`, 'Price quoted', inp(`lines.${i}.price`, 'number', 'step="0.01"'))}
+    <div class="col-md-1">${D.lines.length > 1 ? `<button class="btn btn-sm btn-outline-secondary" title="Remove item" aria-label="Remove item" onclick="act.npRemove('lines', ${i})"><i class="bi bi-x-lg"></i></button>` : ''}</div>
+    <div class="col-12 item-sub" id="np-hint-${i}">${lineHint(i)}</div></div>`).join('') + `<datalist id="np-products">${productNames().map(n => `<option value="${esc(n)}">`).join('')}</datalist>`;
+  const ships = D.ships.map((s, i) => { const p = `ships.${i}`; return `<div class="ship mb-3"><div class="ship-body" style="display:block">
+    <div class="d-flex align-items-center gap-2 mb-2 flex-wrap"><h4 class="ship-name mb-0">${esc(s.name || `Shipment ${i + 1}`)}</h4><span class="ship-kind">${s.type === 'container' ? 'Ocean container' : 'LTL / pallet'}</span><div class="ms-auto d-flex gap-2"><button class="btn btn-sm btn-outline-secondary" onclick="act.npCopyShip(${i})" title="Copy this shipment for the next truck"><i class="bi bi-copy me-1"></i>Duplicate</button>${D.ships.length > 1 ? `<button class="btn btn-sm btn-outline-secondary" onclick="act.npRemove('ships', ${i})" title="Remove shipment" aria-label="Remove shipment"><i class="bi bi-x-lg"></i></button>` : ''}</div></div>
+    <div class="row g-3">
+      ${col(4, `${p}.name`, 'Name', inp(`${p}.name`))}
+      ${col(4, `${p}.type`, 'Kind', sel(`${p}.type`, [['container', 'Ocean container'], ['ltl', 'LTL / pallet']], true))}
+      ${col(4, `${p}.sqft`, 'Quantity (sq ft)', inp(`${p}.sqft`, 'number'))}
+      ${col(4, `${p}.needBy`, 'Date required', inp(`${p}.needBy`, 'date', s.asap ? 'disabled' : '') + `<div class="mt-1">${chk(`${p}.asap`, 'ASAP')}</div>`)}
+      ${col(4, `${p}.origin`, 'Ships from', sel(`${p}.origin`, origins.map(v => [v.id, v.name])))}
+      ${s.type === 'container' ? col(4, `${p}.port`, 'US port', sel(`${p}.port`, Object.keys(C.ocean).map(k => [k, k]))) : ''}
+      ${col(4, `${p}.siteType`, 'Delivering to', sel(`${p}.siteType`, [['Job site', 'Job site'], ['Warehouse', 'Warehouse']]))}
+      ${col(8, `${p}.address`, 'Address', inp(`${p}.address`))}
+      ${col(4, `${p}.dlName`, 'Delivery contact', inp(`${p}.dlName`))}
+      ${col(4, `${p}.dlPhone`, 'Contact phone', inp(`${p}.dlPhone`))}
+      <div class="col-md-4 d-flex align-items-end gap-3">${chk(`${p}.dock`, 'Dock door')}${chk(`${p}.forklift`, 'Forklift')}</div>
+      ${col(4, `${p}.custPO`, 'Customer PO for this truck, if separate', inp(`${p}.custPO`))}
+      ${col(8, `${p}.sidemark`, 'Sidemark', inp(`${p}.sidemark`))}
+    </div></div></div>`; }).join('');
+  const paper = `<div class="row g-3">
+    ${col(4, 'tax', 'Tax status', sel('tax', [['confirm', 'Not confirmed yet'], ['taxable', 'Taxable, confirmed'], ['exempt', 'Exempt, certificate on file']]))}
+    ${col(4, 'prelim', 'Preliminary notice', sel('prelim', [['file', 'Needs filing'], ['filed', 'Filed'], ['none', 'Not required']]))}
+    ${col(4, 'deposit', 'Deposit', sel('deposit', [['none', 'Not required'], ['due', 'Required, not received'], ['paid', 'Required, received']]))}
+  </div><div class="item-sub mt-2">${isNew ? 'New customer: the account package and credit approval start as open items. ' : ''}The signed acknowledgement starts open. The delivery contact is complete when every dated shipment has one.</div>`;
+  return pageHeader('Enter a PO by hand', 'One form for what goes on the cover page, the checklist, and the order matrix today.', `<button class="btn btn-outline-secondary btn-sm" onclick="act.npCancel()">Cancel</button><button class="btn btn-primary btn-sm" onclick="act.savePO()"><i class="bi bi-check-lg me-1"></i> Save order</button>`, { back:'orders-queue' }) +
+  `<div class="show-layout"><div class="show-main">
+    ${detailCard('The order', '', order)}
+    ${detailCard('Items', 'name, quantity, and the price quoted', lines + `<button class="btn btn-sm btn-outline-secondary mt-3" onclick="act.npAdd('lines')"><i class="bi bi-plus-lg me-1"></i>Add item</button>`)}
+    ${detailCard('Shipments', 'one per container or per date required', ships + `<div class="d-flex align-items-center gap-3 flex-wrap"><button class="btn btn-sm btn-outline-secondary" onclick="act.npAdd('ships')"><i class="bi bi-plus-lg me-1"></i>Add shipment</button><span class="item-sub" id="np-totals">${totalsText()}</span></div>`)}
+    ${detailCard('Before it goes to the factory', '', paper)}
+    ${detailCard('Comments', 'like the cover page', `<textarea class="form-control form-control-sm" id="np-comments" rows="3" oninput="act.np('comments', this.value)">${esc(D.comments)}</textarea>`)}
+  </div><div class="show-sidebar">${detailCard('What saving does', '', `<div style="font-size:13px;color:var(--text-2);line-height:1.6"><p>Creates the order, its items and shipments, and its checklist. It lands in the queue until a shipment is placed, and the dashboard proposes the acknowledgement.</p><p class="mb-0">It replaces the cover page, the paper checklist, and the order matrix line. Navigator entry stays the same as today.</p></div>`)}</div></div>`;
+}
+Object.assign(act, {
+  np(path, v, rerender) {
+    draftSet(path, v);
+    if (path === 'customer') { const c = cust(v); poDraft.contact = c ? ((contactsOf(c.id).find(x => x.primary) || {}).id || '') : ''; if (c) poDraft.rep = c.rep; }
+    if (/^lines\.\d+\./.test(path)) { const i = Number(path.split('.')[1]); const el = document.getElementById('np-hint-' + i); if (el) el.innerHTML = lineHint(i); }
+    if (/\.sqft$|^lines\./.test(path)) { const el = document.getElementById('np-totals'); if (el) el.innerHTML = totalsText(); }
+    if (rerender) renderMain();
+  },
+  npAdd(kind) {
+    const D = poDraft;
+    if (kind === 'lines') D.lines.push({ product:'', qty:'', unit:'sq ft', price:'' });
+    else { const last = D.ships[D.ships.length - 1]; D.ships.push(shipDraft(D.ships.length + 1, last ? { type:last.type, origin:last.origin, port:last.port, siteType:last.siteType, address:last.address, dlName:last.dlName, dlPhone:last.dlPhone, dock:last.dock, forklift:last.forklift, name:`${last.type === 'ltl' ? 'Pallet' : 'Container'} ${D.ships.length + 1}` } : {})); }
+    renderMain();
+  },
+  npRemove(kind, i) { poDraft[kind].splice(i, 1); renderMain(); },
+  npCopyShip(i) {
+    const s = poDraft.ships[i], bump = t => String(t || '').replace(/(\d+)(?!.*\d)/, m => String(Number(m) + 1));
+    poDraft.ships.splice(i + 1, 0, { ...s, name: bump(s.name), sidemark: bump(s.sidemark), custPO:'', needBy:'', asap:false }); renderMain();
+  },
+  npCancel() { poDraft = null; go('orders-queue'); },
+  savePO() {
+    const D = poDraft, isNew = D.customer === '__new', ships = D.ships.filter(s => Number(s.sqft) > 0);
+    const missing = [!D.customer && 'a customer', isNew && !D.newName.trim() && 'the company name', !D.job.trim() && 'a job name', !ships.length && 'a shipment with a quantity', ships.some(s => s.type === 'container' && !s.port) && 'a US port'].filter(Boolean);
+    if (missing.length) { toast(`<b>Not saved yet.</b> It still needs ${missing.join(', ')}.`); return; }
+    let c = isNew ? null : cust(D.customer);
+    if (isNew) {
+      let cid = D.newName.toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-|-$/g, '') || 'customer'; while (company(cid)) cid += '-2';
+      c = { id:cid, name:D.newName.trim(), hq:D.newCity.trim() || '—', contact:D.newContact.trim() || '—', email:D.newEmail.trim(), rep:D.rep || reps0(), onboarded:false, showLeadTimes:true, notes:'New account. First PO entered by hand.', completeness:0, cos90:0 };
+      customers.push(c);
+      if (D.newContact.trim()) contacts.push({ id:'ct' + (Math.max(...contacts.map(x => Number(x.id.slice(2)))) + 1), company:cid, name:D.newContact.trim(), title:'Buyer', email:D.newEmail.trim(), status:'active', primary:true });
+    }
+    const id = 'PO-' + (Math.max(...pos.map(p => Number(p.id.slice(3)))) + 1);
+    const lines = D.lines.filter(l => l.product.trim() && Number(l.qty) > 0).map((l, i) => ({ id:'L' + (i + 1), product:l.product.trim(), ...(l.unit === 'sq ft' ? { sqft:Number(l.qty) } : { qty:Number(l.qty), unit:l.unit }), ...(l.price ? { price:Number(l.price) } : {}) }));
+    const total = ships.reduce((a, s) => a + Number(s.sqft), 0), lineSqft = lines.reduce((a, l) => a + (l.sqft || 0), 0);
+    const dated = ships.filter(s => s.needBy || s.asap), who = isNew ? D.newContact.trim() : (contact(D.contact) || {}).name;
+    if (isNew) c.completeness = Math.round(100 * [D.custPO, D.job, D.site, ships.every(s => s.needBy || s.asap), ships.every(s => s.address.trim()), ships.every(s => s.dlName.trim()), D.tax !== 'confirm'].filter(Boolean).length / 7);
+    const p = { id, customer:c.id, job:D.job.trim(), site:D.site.trim() || c.hq, sqft:lineSqft || total, product:lines[0] ? lines[0].product : 'To be confirmed', received:D.received || iso(TODAY), source:`${D.source}${D.custPO.trim() ? ` (PO ${D.custPO.trim()})` : ''}`, rep:D.rep || c.rep,
+      gate:[['package', 'New account package', 'Customer', isNew ? 'pending' : 'done'], ['credit', 'Credit approved', 'Credit', isNew ? 'pending' : 'done'], ['deposit', 'Deposit', 'Customer', { none:'na', due:'pending', paid:'done' }[D.deposit]], ['prelim', 'Preliminary notice filed', 'Ops', { file:'pending', filed:'done', none:'na' }[D.prelim]], ['tax', 'Tax status confirmed', 'Ops', D.tax === 'confirm' ? 'pending' : 'done'], ['ack', 'Signed acknowledgement', 'Customer', 'pending'], ['delivery', 'Delivery contact', 'Customer', dated.length && dated.every(s => s.dlName.trim()) ? 'done' : 'pending']],
+      activity:[[iso(TODAY), `Entered by hand by ${TEAM[ME]}${who ? ` from ${who}'s ${{ 'Email with PDF':'email with a PDF', 'Email text':'email', 'Phone':'phone call', 'Other':'order' }[D.source]}` : ''}: ${ships.length} shipment${ships.length > 1 ? 's' : ''}, ${total.toLocaleString()} sq ft.`], ...(D.comments.trim() ? [[iso(TODAY), `Comment: ${D.comments.trim()}`]] : [])],
+      ack:{ sent:null, signed:null } };
+    if (D.custPO.trim()) p.custPO = D.custPO.trim();
+    if (D.jobNo.trim()) p.jobNo = D.jobNo.trim();
+    Object.defineProperty(p, 'lane', { get: () => { const sh = shipsOf(p.id); return sh.length && sh.every(s => s.invoiced && isDelivered(s)) ? 'complete' : sh.some(s => s.placedAt) ? 'production' : 'queue'; } });
+    if (lines.length) LINES[id] = lines;
+    let n = Math.max(...shipments.map(s => Number(s.id.slice(1))));
+    ships.forEach(d => { const container = d.type === 'container';
+      const s = { id:'S' + (++n), po:id, name:d.name.trim() || (container ? 'Container' : 'Pallet'), type:d.type, sqft:Number(d.sqft), origin:ORIGIN_LABEL[d.origin] || vendor(d.origin).name, port:container ? d.port : null,
+        dest:d.address.trim() ? `${d.siteType}, ${d.address.trim()}` : 'Ship-to address missing', needBy:d.asap ? null : (d.needBy || null), placedAt:null, stage:-1, actual:{}, originCo:d.origin, forwarder:container ? 'pacific-line' : null, carrier:container ? (PORT_CARRIER[d.port] || null) : 'cascade-ltl' };
+      if (d.asap) s.asap = true;
+      if (d.custPO.trim()) s.custPO = d.custPO.trim();
+      if (d.sidemark.trim()) s.sidemark = d.sidemark.trim();
+      if (d.dlName.trim() || d.dlPhone.trim()) s.delivery = { name:d.dlName.trim(), phone:d.dlPhone.trim(), site:d.siteType, dock:d.dock, forklift:d.forklift, rules:[] };
+      shipments.push(s); });
+    pos.unshift(p); poDraft = null;
+    toast(`<b>${id} saved.</b> ${esc(p.job)} is in the queue, and the dashboard proposes its acknowledgement.`);
+    go('po-' + id.slice(3));
+  },
+  addShipment(poId) {
+    const p = po(poId), sh = shipsOf(poId), last = sh[sh.length - 1] || {}, type = last.type || 'container';
+    const s = { id:'S' + (Math.max(...shipments.map(x => Number(x.id.slice(1)))) + 1), po:poId, name:`${type === 'ltl' ? 'Pallet' : 'Container'} ${sh.filter(x => x.type === type).length + 1}`, type,
+      sqft:Math.max(0, p.sqft - sh.reduce((a, x) => a + x.sqft, 0)) || last.sqft || 0, origin:last.origin || 'Daizhin, Korea', port:last.port || (type === 'container' ? 'Savannah' : null), dest:last.dest || 'Ship-to address missing',
+      needBy:null, placedAt:null, stage:-1, actual:{}, originCo:last.originCo || 'daizhin', forwarder:last.forwarder || (type === 'container' ? 'pacific-line' : null), carrier:last.carrier || null };
+    shipments.push(s); p.activity.push([iso(TODAY), `${TEAM[ME]} added ${s.name}.`]);
+    toast(`<b>${esc(s.name)} added.</b> Set its date and details, then save.`); go('ship-' + s.id);
+  },
+});
+const reps0 = () => [...new Set(customers.map(x => x.rep))].sort()[0];
 
 function viewIntake() {
   const rows = intake.filter(i => (T.intakeFilter === 'all' || i.result === T.intakeFilter) && matches(i.subject, i.from, i.match)).sort((a, b) => T.intakeSort === 'oldest' ? (a.received > b.received ? 1 : -1) : (b.received > a.received ? 1 : -1));
@@ -1493,14 +1639,14 @@ function viewPO(id, tab = 'shipments') {
     : waiting.length ? `<div class="status-banner pending"><i class="bi bi-hourglass-split"></i><span>This order is <strong>in production</strong>.${notPlaced}</span></div>`
     : `<div class="status-banner active"><i class="bi bi-check-circle-fill"></i><span>This order is <strong>in production</strong> and on track. ${sh.filter(isDelivered).length} of ${sh.length} shipments delivered.</span></div>`;
   const tabs = tabsUl([[`po-${n}`, 'Shipments', sh.length], [`po-${n}-changes`, 'Change requests', cos.length, cos.some(x => x.status === 'pending') ? 'warning' : 'secondary'], [`po-${n}-chats`, 'Chats', ths.length, ths.some(t => t.status === 'open') ? 'warning' : 'secondary'], [`po-${n}-activity`, 'Activity', p.activity.length]], tab === 'shipments' ? `po-${n}` : `po-${n}-${tab}`);
-  const tools = { shipments: `<button class="btn btn-sm btn-outline-secondary" onclick="act.expandAll('${p.id}', true)">Expand all</button><button class="btn btn-sm btn-outline-secondary" onclick="act.expandAll('${p.id}', false)">Collapse all</button><button class="btn btn-sm btn-primary" onclick="act.stub('<b>Prototype.</b> Add shipment form would open here.')"><i class="bi bi-plus-lg me-1"></i>Add shipment</button>`,
+  const tools = { shipments: `<button class="btn btn-sm btn-outline-secondary" onclick="act.expandAll('${p.id}', true)">Expand all</button><button class="btn btn-sm btn-outline-secondary" onclick="act.expandAll('${p.id}', false)">Collapse all</button><button class="btn btn-sm btn-primary" onclick="act.addShipment('${p.id}')"><i class="bi bi-plus-lg me-1"></i>Add shipment</button>`,
     changes: `<a class="btn btn-sm btn-outline-secondary" href="#changes">All change requests</a>`, chats: `<a class="btn btn-sm btn-outline-secondary" href="#chats-open">All chats</a>`, activity: '' }[tab] || '';
   const main = tab === 'changes' ? `<div class="detail-card"><ul class="action-list">${cos.length ? cos.map(x => coRow(x)).join('') : '<li class="empty">None on this order.</li>'}</ul></div>`
     : tab === 'chats' ? `<div class="detail-card"><ul class="thread-list">${ths.length ? ths.map(t => threadListItem(t, false)).join('') : '<li class="empty">No conversations on this order.</li>'}</ul></div>`
     : tab === 'activity' ? `<div class="detail-card"><div class="detail-card-body" style="padding:6px 20px"><ul class="timeline">${[...p.activity].reverse().map(a => { const [ic, icon] = activityIcon(a[1]); return `<li class="timeline-item"><div class="timeline-icon ${ic}"><i class="bi bi-${icon}"></i></div><div class="minw0"><div class="timeline-text">${esc(a[1])}</div><div class="timeline-time">${fmtLong(a[0])}</div></div></li>`; }).join('')}</ul></div></div>`
     : `<div class="stack" style="gap:10px">${sh.map(s => shipCard(s, {office:true})).join('')}</div>`;
   return pageHeader(esc(p.job), `${esc(c.name)}${p.jobNo ? ` · job <span class="mono">${esc(p.jobNo)}</span>` : ''}${p.custPO ? ` · PO <span class="mono">${esc(p.custPO)}</span>` : ''} · ${esc(p.site)} · ${sqft(p.sqft)} · ${esc(p.product)}`,
-    `${pill({k:h, t:PO_LABEL[h]})}<button class="btn btn-outline-secondary btn-sm" onclick="act.remind('${p.id}')"><i class="bi bi-bell me-1"></i> Remind customer</button><a class="btn btn-outline-secondary btn-sm" href="#portal-po-${n}"><i class="bi bi-eye me-1"></i> View as customer</a><div class="dropdown"><button class="btn btn-outline-secondary btn-sm dropdown-toggle" data-bs-toggle="dropdown"><i class="bi bi-three-dots"></i></button><ul class="dropdown-menu dropdown-menu-end"><li><a class="dropdown-item" href="#po-${n}" onclick="act.stub('<b>Prototype.</b> Add shipment form would open here.')"><i class="bi bi-plus-lg me-2"></i>Add shipment</a></li><li><a class="dropdown-item" href="#po-${n}" onclick="act.stub('<b>Prototype.</b> Original email would open here.')"><i class="bi bi-envelope me-2"></i>View original email</a></li><li><hr class="dropdown-divider"></li><li><a class="dropdown-item text-danger" href="#po-${n}" onclick="act.stub('<b>Prototype.</b> Cancellation would need a reason and a customer notice.')"><i class="bi bi-x-circle me-2"></i>Cancel order</a></li></ul></div>`,
+    `${pill({k:h, t:PO_LABEL[h]})}<button class="btn btn-outline-secondary btn-sm" onclick="act.remind('${p.id}')"><i class="bi bi-bell me-1"></i> Remind customer</button><a class="btn btn-outline-secondary btn-sm" href="#portal-po-${n}"><i class="bi bi-eye me-1"></i> View as customer</a><div class="dropdown"><button class="btn btn-outline-secondary btn-sm dropdown-toggle" data-bs-toggle="dropdown"><i class="bi bi-three-dots"></i></button><ul class="dropdown-menu dropdown-menu-end"><li><a class="dropdown-item" href="#po-${n}" onclick="event.preventDefault();act.addShipment('${p.id}')"><i class="bi bi-plus-lg me-2"></i>Add shipment</a></li><li><a class="dropdown-item" href="#po-${n}" onclick="act.stub('<b>Prototype.</b> Original email would open here.')"><i class="bi bi-envelope me-2"></i>View original email</a></li><li><hr class="dropdown-divider"></li><li><a class="dropdown-item text-danger" href="#po-${n}" onclick="act.stub('<b>Prototype.</b> Cancellation would need a reason and a customer notice.')"><i class="bi bi-x-circle me-2"></i>Cancel order</a></li></ul></div>`,
     { back: 'orders-' + p.lane, id: p.id }) + banner + pageNav(tabs, tools) +
   `<div class="show-layout"><div class="show-main">${main}</div><div class="show-sidebar">${poSidebar(p, c)}</div></div>`;
 }
@@ -1932,6 +2078,7 @@ const NAV = [
 const BADGE = { danger:'bg-danger', warn:'bg-warning text-dark' };
 const navBadge = al => al ? `<span class="badge ${BADGE[al.sev]}" title="${al.n} ${al.why}">${al.n}</span>` : '';
 function activeNav() {
+  if (route === 'new-po') return 'orders-queue';
   const pm = route.match(/^po-(\d+)/); if (pm) { const p = po('PO-' + pm[1]); return 'orders-' + (p ? p.lane : 'production'); }
   if (route.startsWith('ship-')) { const s = ship(route.slice(5)); const p = s && po(s.po); return 'orders-' + (p ? p.lane : 'production'); }
   if (route.startsWith('todo')) return 'todo';
@@ -1965,6 +2112,7 @@ function crumbs() {
   if (route === 'intake') items.push(['Orders', 'orders-production'], ['Intake', null]);
   else if (route === 'orders-queue') items.push(['Orders', 'orders-production'], ['Queue', null]);
   else if (route === 'orders-production') items.push(['Orders', 'orders-production'], ['Production', null]);
+  else if (route === 'new-po') items.push(['Orders', 'orders-production'], ['Enter a PO by hand', null]);
   else if (/^po-\d+/.test(route) || route.startsWith('ship-')) {
     const sEdit = route.startsWith('ship-') ? ship(route.slice(5)) : null; const m = route.match(/^po-(\d+)(?:-(\w+))?$/);
     const p = sEdit ? po(sEdit.po) : po('PO-' + (m ? m[1] : ''));
@@ -2074,6 +2222,7 @@ function renderMain() {
   else if (route === 'orders-queue') body = viewOrders('queue');
   else if (route === 'orders-production') body = viewOrders('production');
   else if (route === 'orders-complete') body = viewOrders('complete');
+  else if (route === 'new-po') body = viewNewPO();
   else if (/^po-\d+/.test(route)) { const m = route.match(/^po-(\d+)(?:-(\w+))?$/); body = m ? viewPO('PO-' + m[1], m[2] || 'shipments') : viewToday(); }
   else if (route.startsWith('ship-')) body = viewShipEdit(route.slice(5));
   else if (route === 'changes' || route.startsWith('changes-')) { coTab = route === 'changes' ? 'pending' : route.slice(8); if (!CO_STATUS[coTab]) coTab = 'pending'; body = viewChanges(); }
