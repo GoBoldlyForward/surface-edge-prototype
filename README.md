@@ -8,12 +8,15 @@ Sample data only. "Today" is pinned to Oct 26, 2026 so the milestone math stays 
 
 ## Working on it
 
-- **One static page.** Everything is in `index.html`. Bootstrap 5.3.3 and Bootstrap Icons 1.11.3 are stored in the repo, so there is no build step and no CDN dependency for styles.
-- **Run it locally:** `python3 -m http.server 8765`, then open http://127.0.0.1:8765/.
+- **One page per section, one script.** Every sidebar section is a folder with its own `index.html`: the dashboard is the root `index.html`, then `todo/`, `feed/`, `orders/`, `chats/`, `vendors/`, `customers/`, `contacts/`, `changes/`, `constraints/` and `portal/`. The pages are thin shells that load `app.css`, `app.js` and the partials. All data, views and behavior live in `app.js`. Bootstrap 5.3.3 and Bootstrap Icons 1.11.3 are stored in the repo, so there is no build step and no CDN dependency for styles.
+- **Routes.** The section is the path and the view inside it is the hash: `/orders/#po-4510`, `/customers/#customer-ilg-chats`. Pinpoint files pins by pathname, which is why each section needs its own path. A link written as `href="#route"` works from anywhere: when the route belongs to another section, the click (or an old `/#po-4510` link) is sent to that section's page. Links in shared chrome use `href(route)` so the real URL shows on hover.
+- **Partials.** `partials/sidebar.html` is fetched into the `<div data-partial="sidebar">` placeholder on each page. To add a partial, drop a file in `partials/` and a placeholder in the pages that need it. The top bar and breadcrumbs are built by `topbar()` in `app.js`. To add a section, copy a folder, set its `data-section` and `<title>`, and add it to `SECTIONS` and `sectionOf()` in `app.js`.
+- **State between pages.** Each page is a full load, so edits to the sample data (approvals, replies, lead times, who you are viewing as) are kept in `sessionStorage` and merged back by id. "Reset sample data" in the user menu clears them; so does closing the tab.
+- **Run it locally:** `python3 -m http.server 8765`, then open http://127.0.0.1:8765/. The partials are fetched, so open it over http, not as a file.
 - **GitHub `main` is the source of truth.** Pages deploys from `main` at the root (`.nojekyll` keeps Jekyll out of the way).
 - **Pull before editing.** Changes also arrive as pull requests from contributors, so pull `main` before editing and never overwrite it from an older local copy.
-- **Reviewing PRs.** PRs branch from the same file, so review them by merging them locally in order and clicking through every route before merging on GitHub.
-- **claude.ai preview.** A preview copy of the page is also published as a claude.ai artifact. It is `index.html` without the `<!doctype>`/`<head>`/`<body>` wrapper. Regenerate it from `index.html` after each change so the two never drift.
+- **Reviewing PRs.** Most PRs touch `app.js`, so review them by merging them locally in order and clicking through every section before merging on GitHub.
+- **claude.ai preview.** A preview copy of the old single page was published as a claude.ai artifact. It predates the split into sections and Pinpoint does not run there, so feedback belongs on the live site.
 
 ## Product decisions
 
