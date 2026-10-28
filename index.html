@@ -831,7 +831,7 @@ const threadsFor = tab => threads.filter(t => tab === 'inbox' ? (t.assignee === 
 const threadsOnPO = poId => threads.filter(t => t.po === poId || (t.cos || []).some(id => changes.find(c => c.id === id)?.po === poId));
 
 /* ---------- milestone engine ---------- */
-const CONTAINER_STAGES = ['Placed with factory', 'Production complete', 'Departed origin port', 'Arrived US port', 'Cleared customs', 'Delivered'];
+const CONTAINER_STAGES = ['Placed with factory', 'Production complete', 'Departed origin port', 'Arrived US port', 'Cleared and released', 'Delivered'];
 const LTL_STAGES = ['Released to warehouse', 'Picked', 'Shipped', 'Delivered'];
 /* Many containers stop at a Georgia warehouse and go on to the job by truck, sometimes weeks later (the "ship from" lines in the
    order matrix). And the last leg depends on how far the job is from the port or warehouse ("a radius out of each port", Oct 23):
@@ -843,9 +843,13 @@ const stagesOf = s => s.type !== 'container' ? LTL_STAGES : s.via ? [...CONTAINE
 vendors.push({ id:'peach-3pl', name:'Peach State Logistics', roles:['Warehouse'], hq:'Pooler, GA', notes:'Third-party warehouse near the Georgia ports. Containers stop here and go on to jobs by truck, sometimes weeks later.', constraint:'pick' });
 Object.assign(ship('S4'), { port:'Savannah', carrier:'coastal-dray', via:'peach-3pl', band:'long' });   // Fairway Container 4: through Georgia, then a truck to Houston
 Object.assign(ship('S18'), { band:'regional' });                                                         // Sugarloaf Container 1: Savannah to Lawrenceville
+/* After the ocean leg (purchasing, Oct 28): cleared and released 1 to 3 days, picked up from the port 2 to 4, delivered 1. Planned at the top of
+   each range. The pickup wait comes out of the old clearance and drayage numbers, and the distance bands become driving days after pickup,
+   so every direct delivery keeps the same total from port arrival. A truck leaving a warehouse has no port pickup to wait for. */
+Object.assign(C, { clearance: 3, pickup: 4, drayage: 1, legRegional: 3, legLong: 6 });
 function durations(s) {
   return s.type === 'container'
-    ? [0, C.production, C.loadout, C.ocean[s.port] ?? 30, C.clearance, s.via ? C.drayage : legDays(s), ...(s.via ? [C.release + legDays(s)] : [])]
+    ? [0, C.production, C.loadout, C.ocean[s.port] ?? 30, C.clearance, C.pickup + (s.via ? C.drayage : legDays(s)), ...(s.via ? [C.release + legDays(s)] : [])]
     : [0, C.pick, 1, C.ground];
 }
 const totalDays = s => durations(s).reduce((a, b) => a + b, 0);
@@ -908,7 +912,7 @@ function health(s) {
 const stageName = s => s.placedAt ? stagesOf(s)[s.stage] : 'Not placed';
 const nextMs = s => milestones(s)[s.stage + 1] || null;
 const overdueMs = s => milestones(s).find(m => m.overdue) || null;
-const MS_SHORT = { 'Production complete':'Production', 'Departed origin port':'Departure', 'Arrived US port':'Port arrival', 'Cleared customs':'Customs', 'Delivered':'Delivery', 'Picked':'Pick', 'Shipped':'Pickup' };
+const MS_SHORT = { 'Production complete':'Production', 'Departed origin port':'Departure', 'Arrived US port':'Port arrival', 'Cleared and released':'Release', 'Delivered':'Delivery', 'Picked':'Pick', 'Shipped':'Pickup' };
 /* Who to ask when a milestone is overdue: the factory or warehouse, then the forwarder, then the last-leg carrier. */
 const msVendor = (s, i) => vendor(s.type === 'container' ? [s.originCo, s.originCo, s.forwarder, s.forwarder, s.forwarder, s.carrier][i] : [s.originCo, s.originCo, s.carrier, s.carrier][i]);
 /* Purchasing requests a booking two to four weeks before the sailing it wants, and the booking comes back one to five days later (Oct 28).
@@ -1768,7 +1772,7 @@ function viewShipEdit(sid) {
       ${field('Origin', sel('f-origin', origins.map(v => [v.id, `${v.name} · ${v.roles[0]}`]), s.originCo))}
       ${field('US port (ocean only)', sel('f-port', Object.keys(C.ocean).map(k => [k, `${k} · ${C.ocean[k]} days`]), s.port, true))}
       ${field('Stops at a warehouse (ocean only)', sel('f-via', vendors.filter(v => v.roles.includes('Warehouse')).map(v => [v.id, `${v.name} · ${v.hq}`]), s.via, true))}
-      ${field('Last leg distance', sel('f-band', BANDS.map(b => [b[0], `${b[1]} · ${legDays({ band: b[0] })} days`]), s.band || 'local'))}
+      ${field('Last leg distance', sel('f-band', BANDS.map(b => [b[0], `${b[1]} · ${C.pickup + legDays({ band: b[0] })} days from release`]), s.band || 'local'))}
       ${field('Destination', txt('f-dest', s.dest), true)}
       ${field('Freight forwarder', sel('f-forwarder', fwds.map(v => [v.id, v.name]), s.forwarder, true))}
       ${field('Carrier (last leg)', sel('f-carrier', carriers.map(v => [v.id, `${v.name} · ${v.roles[0]}`]), s.carrier, true))}
@@ -2070,7 +2074,7 @@ function viewVendors(roleSlug) {
   return pageHeader('Vendors', 'Factories, forwarders, carriers, and warehouses that move each shipment.', `<button class="btn btn-primary btn-sm" onclick="act.stub('<b>Prototype.</b> New vendor form would open here.')"><i class="bi bi-plus-lg me-1"></i> New vendor</button>`) + pageNav(tabs, tools) +
   tabDesc(role ? ROLE_DESC[role] : 'Factories, forwarders, brokers, carriers, and warehouses. A company can hold more than one role.') +
   `<div class="data-table-wrapper"><div class="table-responsive"><table class="table table-hover"><thead><tr><th>Vendor</th><th>Roles</th><th>Primary contact</th><th class="num">Active shipments</th><th class="num">Open changes</th><th>Lead time</th></tr></thead><tbody>
-    ${rows.map(v => { const vs = vendorShipments(v.id).filter(s => !isDelivered(s)); const pc = contactsOf(v.id).find(c => c.primary); return `<tr class="link" onclick="go('vendor-${v.id}')"><td class="item-name"><a href="#vendor-${v.id}">${esc(v.name)}</a><div class="item-sub">${esc(v.hq)}</div></td><td><div class="tag-list">${v.roles.map(r => `<span class="tag blue">${esc(r)}</span>`).join('')}</div></td><td>${pc ? `${esc(pc.name)}<div class="item-sub mono">${esc(pc.email)}</div>` : '<span class="text-body-secondary">—</span>'}</td><td class="num">${vs.length}</td><td class="num">${companyChanges(v.id).filter(c => c.status === 'pending').length}</td><td><span class="mono">${v.constraint === 'production' ? C.production : C[v.constraint]} days</span><div class="item-sub">${CONSTRAINT_LABEL[v.constraint]}</div></td></tr>`; }).join('')}
+    ${rows.map(v => { const vs = vendorShipments(v.id).filter(s => !isDelivered(s)); const pc = contactsOf(v.id).find(c => c.primary); return `<tr class="link" onclick="go('vendor-${v.id}')"><td class="item-name"><a href="#vendor-${v.id}">${esc(v.name)}</a><div class="item-sub">${esc(v.hq)}</div></td><td><div class="tag-list">${v.roles.map(r => `<span class="tag blue">${esc(r)}</span>`).join('')}</div></td><td>${pc ? `${esc(pc.name)}<div class="item-sub mono">${esc(pc.email)}</div>` : '<span class="text-body-secondary">—</span>'}</td><td class="num">${vs.length}</td><td class="num">${companyChanges(v.id).filter(c => c.status === 'pending').length}</td><td><span class="mono">${(n => `${n} day${n === 1 ? '' : 's'}`)(v.constraint === 'production' ? C.production : C[v.constraint])}</span><div class="item-sub">${CONSTRAINT_LABEL[v.constraint]}</div></td></tr>`; }).join('')}
   </tbody></table></div>${tableFooter(rows.length, 'vendors')}</div>`;
 }
 function viewContacts(tab) {
@@ -2094,6 +2098,7 @@ function viewSettings() {
   `<div class="stack">
   ${detailCard('Ocean shipment legs (days)', '', grid(f('Factory production','production') + f('Production finished to sailing','loadout') + f('Production finished to sailing, ASAP orders','loadoutUrgent') + f('Booking request before sailing','bookingLead') + f('Booking comes back within','bookingBack') + f('Port clearance','clearance') + f('Drayage to destination','drayage')))}
   ${detailCard('Ocean transit from Korea by US port (days)', 'median of the order history', grid(Object.keys(C.ocean).map(p => f(p, 'ocean', p, OCEAN_HISTORY[p])).join('')))}
+  ${detailCard('Port pickup (days)', 'from release until the truck leaves the port', grid(f('Picked up from port','pickup')))}
   ${detailCard('Domestic from Wanke warehouse (days)', '', grid(f('Pick','pick') + f('Ground to job site','ground')))}
   ${detailCard('Ship-by date (days before the need-by)', 'purchasing\'s rule; it goes on the factory PO', grid(f('West Coast ports','shipByWest') + f('Gulf and East Coast ports','shipByEast')))}
   ${detailCard('Last leg by distance (days)', 'local uses drayage above', grid(f('Regional, 150 to 500 miles','legRegional') + f('Long haul, over 500 miles','legLong') + f('Warehouse release before the truck','release')))}
