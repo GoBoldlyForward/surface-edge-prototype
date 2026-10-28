@@ -132,6 +132,17 @@ body.portal .main-content{margin-left:0}
 .info-strip.open .info-text{white-space:normal}
 .info-strip .info-chev{flex-shrink:0;font-size:11px;color:var(--text-faint);transition:transform .15s ease;line-height:1.6}
 .info-strip:not(.open):not(.clipped){cursor:default}
+.sub-nav{gap:4px;margin:-4px 0 12px;flex-wrap:nowrap;overflow-x:auto}
+.sub-nav .nav-link{padding:4px 12px;font-size:13px;font-weight:500;border-radius:999px;color:var(--text-muted);white-space:nowrap}
+.sub-nav .nav-link:hover{color:var(--text-2);background:var(--surface-3)}
+.sub-nav .nav-link.active{background:var(--info-bg);color:var(--accent)}
+.sub-nav .nav-link .badge{font-size:11px;font-weight:500;padding:2px 7px;border-radius:10px;margin-left:4px}
+.feed-list{list-style:none;margin:0;padding:0 20px 8px;flex:1}
+.feed-day{font-size:11px;font-weight:600;text-transform:uppercase;letter-spacing:.5px;color:var(--text-faint);padding:14px 0 6px;border-bottom:1px solid var(--border-soft)}
+.feed-item{display:flex;gap:12px;padding:10px 0;border-bottom:1px solid var(--border-soft)}
+.feed-line{font-size:13px;color:var(--text-2);line-height:1.5}
+.feed-line b{color:var(--text);font-weight:600}
+.feed-meta{display:flex;gap:10px;flex-wrap:wrap;font-size:12px;color:var(--text-faint);margin-top:2px}
 /* ── Portal chat launcher ── */
 .cw-bubble{position:fixed;right:20px;bottom:calc(20px + env(safe-area-inset-bottom,0px));width:56px;height:56px;border-radius:50%;border:0;background:linear-gradient(135deg,#818cf8,#4f46e5);color:#fff;font-size:24px;display:flex;align-items:center;justify-content:center;box-shadow:0 6px 20px rgba(79,70,229,.35);cursor:pointer;z-index:1090;transition:transform .15s ease}
 .cw-bubble:hover{transform:scale(1.05)}
@@ -931,7 +942,7 @@ function toast(msg) {
 const act = {
   completeAction(id, msg) { done.add(id); toast(`<b>Done.</b> ${msg}`); render(); },
   decideCO(id, status) {
-    const c = changes.find(x => x.id === id); c.status = status; c.note = `You · ${fmt(TODAY)}`;
+    const c = changes.find(x => x.id === id); c.status = status; c.note = `You · ${fmt(TODAY)}`; c.decidedAt = iso(TODAY);
     const who = c.by.split('·')[1].trim();
     const log = msg => { if (c.po) po(c.po).activity.push([iso(TODAY), msg]); };
     if (status === 'approved') {
@@ -1007,6 +1018,7 @@ const act = {
   theme() { themePref = { auto:'light', light:'dark', dark:'auto' }[themePref]; try { localStorage.setItem('se-theme', themePref); } catch (e) {} applyTheme(); renderMain(); toast(`<b>${THEME_UI[themePref][1].replace('Theme: ', '')}</b> theme.`); },
   toggleShip(id) { openShips.has(id) ? openShips.delete(id) : openShips.add(id); renderMain(); },
   toggleDesc() { openDesc.has(route) ? openDesc.delete(route) : openDesc.add(route); renderMain(); },
+  feedMore() { feedLimit += 40; renderMain(); },
   perfMode(m) { perf.mode = m; renderMain(); },
   perfNav(dir) { if (perf.mode === 'weekly') { perf.month += dir; if (perf.month < 0) { perf.month = 11; perf.year--; } if (perf.month > 11) { perf.month = 0; perf.year++; } } else perf.year += dir; if (perf.year < 2024) perf.year = 2024; renderMain(); },
   expandAll(poId, open) { shipsOf(poId).forEach(s => open ? openShips.add(s.id) : openShips.delete(s.id)); renderMain(); },
@@ -1207,25 +1219,122 @@ function shipCard(s, opts = {}) {
 }
 
 /* ---------- views: back office ---------- */
+/* ---------- Dashboard: Overview (glance), To do (work queue), Feed (what happened) ---------- */
+const DASH_TABS = [['today','Overview'],['todo','To do'],['feed','Feed']];
+/* One rule for To do counts everywhere: red with the blocking count when anything blocks production, otherwise yellow with everything waiting. */
+const todoAlert = () => { const a = nextActions(); return firstOf(red(a.filter(x => x.k === 'crit').length), yellow(a.length)); };
+const dashTabs = active => { const al = todoAlert(); return tabsUl(DASH_TABS.map(t => [t[0], t[1], t[0] === 'todo' && al ? al.n : null, t[0] === 'todo' && al ? (al.sev === 'danger' ? 'danger' : 'warning') : null]), active); };
+const dashHeader = () => pageHeader('Dashboard', 'What needs a decision today, and how the business is trending.', `<span class="proto-tag">Monday, Oct 26, 2026</span>`);
+const needsAttention = s => s.placedAt && !isDelivered(s) && ['crit', 'warn'].includes(health(s).k);
+const openAttention = () => { T.orderFilter = 'attention'; T.groupBy = 'shipment'; groupBy = 'shipment'; };
+Object.assign(T, { todoFilter:'all', todoSort:'urgency', feedFilter:'all' });
+/* Second-level menu under the Dashboard tabs: small pills, same four-then-More rule as tab bars. */
+const pillsUl = (items, active) => tabsUl(items, active).replace('<ul class="nav nav-tabs">', '<ul class="nav nav-pills sub-nav">');
+
+/* To do: every proposed action, typed and owned, most urgent first. */
+const TODO_TYPES = [['decisions','Decisions','Change requests waiting on a decision.'],['place','Place orders','Shipments due to be placed with the factory or warehouse.'],['paperwork','Paperwork','Acknowledgements, reminders for missing information, and departure notices.'],['replies','Replies','Replies drafted from the thread and the order, ready to send.'],['exceptions','Exceptions','Shipments that are late, overdue at a milestone, or missing a booking.']];
+function todoType(a) {
+  if (/^CO-/.test(a.id)) return 'decisions';
+  if (/^place-/.test(a.id)) return 'place';
+  if (/^(remind|ack|acksign|stop)-/.test(a.id)) return 'paperwork';
+  if (/^draft-/.test(a.id)) return 'replies';
+  return 'exceptions';
+}
+function todoOwner(a) {
+  if (/^CO-/.test(a.id)) { const c = changes.find(x => x.id === a.id); return c && ['Customer', 'Contact'].includes(c.context) ? 'melissa' : 'ryan'; }
+  if (/^draft-/.test(a.id)) return (thread(a.id.slice(6)) || {}).assignee || null;
+  if (/^(remind|ack|acksign)-/.test(a.id)) return 'marlene';
+  if (/^late-/.test(a.id)) return 'melissa';
+  return 'ryan';
+}
+const SEV_ORDER = { crit:0, warn:1, info:2, muted:3 };
+const actionButtons = a => `<a class="btn btn-sm btn-outline-secondary" href="#${a.link}">Open</a>${a.open ? '' : a.fn ? `<button class="btn btn-sm btn-primary" onclick="${a.fn}">${esc(a.btn)}</button>` : `<button class="btn btn-sm btn-primary" onclick="act.completeAction('${a.id}', '${esc(a.toast).replace(/'/g, '&#39;')}')">${esc(a.btn)}</button>`}`;
+function viewTodo(type) {
+  const all = nextActions().map(a => ({ ...a, type: todoType(a), owner: todoOwner(a) }));
+  let list = all.filter(a => (!type || a.type === type) && (T.todoFilter === 'all' || a.owner === T.todoFilter) && matches(a.t, a.d));
+  list = T.todoSort === 'type' ? list.sort((a, b) => TODO_TYPES.findIndex(t => t[0] === a.type) - TODO_TYPES.findIndex(t => t[0] === b.type) || SEV_ORDER[a.k] - SEV_ORDER[b.k]) : list.sort((a, b) => SEV_ORDER[a.k] - SEV_ORDER[b.k]);
+  const typeTabs = pillsUl([['todo', 'All', all.length], ...TODO_TYPES.map(t => ['todo-' + t[0], t[1], all.filter(a => a.type === t[0]).length])], type ? 'todo-' + type : 'todo');
+  const tools = searchBox('Search to do…') + filterTool('todoFilter', [['all','Everyone'], ...Object.entries(TEAM).map(([k, v]) => [k, k === ME ? 'Mine' : v])]) + sortTool('todoSort', [['urgency','Most urgent first'],['type','By type']]);
+  const typeName = t => TODO_TYPES.find(x => x[0] === t)[1];
+  return dashHeader() + pageNav(dashTabs('todo'), tools) + typeTabs + tabDesc(type ? TODO_TYPES.find(t => t[0] === type)[2] : 'Everything that needs a person, most urgent first. Approve to let the system send it, or open it to change it first.') +
+    `<div class="detail-card grow"><ul class="action-list">${list.length ? list.map(a => actionItem(a.k, esc(a.t), `${esc(a.d)}<div class="tag-list mt-1"><span class="tag">${typeName(a.type)}</span>${a.owner ? `<span class="tag ${a.owner === ME ? 'blue' : ''}"><i class="bi bi-person me-1"></i>${esc(a.owner === ME ? 'You' : TEAM[a.owner].split(' ')[0])}</span>` : '<span class="tag red">Unassigned</span>'}</div>`, actionButtons(a))).join('') : '<li class="empty">Nothing here. The system proposes the next action as emails arrive and milestones come due.</li>'}</ul>${tableFooter(list.length, 'actions')}</div>`;
+}
+
+/* Feed: one stream of what happened, built from threads, milestones, bookings, change requests, and order activity. */
+const FEED_TYPES = [['system','Sent by system','Emails, reminders, and notes the system sent or recorded on its own.'],['customers','From customers','Messages and requests from customers, by email or the portal.'],['vendors','From vendors','Messages, bookings, and lead-time changes from factories, forwarders, and carriers.'],['milestones','Milestones','Orders placed, production finished, departures, arrivals, and deliveries as they were recorded.'],['team','Team','Decisions and changes made by people on the Surface Edge team.']];
+const FEED_ICON = { system:['gray','robot'], customers:['blue','building'], vendors:['amber','truck'], milestones:['green','flag'], team:['blue','person'] };
+const noteDate = note => { const m = /([A-Z][a-z]{2}) (\d{1,2})$/.exec(note || ''); return m ? iso(new Date(2026, MONTHS.indexOf(m[1]), Number(m[2]))) : iso(TODAY); };
+const byParty = by => /^Vendor/.test(by) ? 'vendors' : /^(Sales|Team)/.test(by) ? 'team' : 'customers';
+function feedEvents() {
+  const ev = [];
+  const orderLink = p => p ? `<a href="#po-${p.id.slice(3)}" class="text-decoration-none">${esc(p.job)}</a>` : '';
+  threads.forEach(t => {
+    const co = t.company ? company(t.company) : null; const ct = t.contact ? contact(t.contact) : null; const p = t.po ? po(t.po) : null;
+    const where = `<a href="#chat-${t.id}" class="text-decoration-none">${esc(t.subject)}</a>`;
+    t.msgs.forEach(m => {
+      const [side, at, body, , label] = m; const [date, time] = at.split(' ');
+      if (side === 'them') ev.push({ type: co && co.roles ? 'vendors' : 'customers', date, time, who: ct ? `${ct.name}${co ? ` · ${co.name}` : ''}` : 'Unknown sender', text: body, where, p });
+      else if (side === 'system') ev.push({ type:'system', date, time, who:'System', text: body, where, p });
+      else { const auto = label && /automatic|reminder/i.test(label); ev.push({ type: auto ? 'system' : 'team', date, time, who: auto ? `System · ${label.toLowerCase()}` : (label && /drafted/.test(label) ? label : (TEAM[t.assignee] || 'Surface Edge')), text: body, where, p }); }
+    });
+  });
+  shipments.forEach(s => {
+    const p = po(s.po); const names = typeof stagesOf === 'function' ? stagesOf(s) : (s.type === 'container' ? CONTAINER_STAGES : LTL_STAGES);
+    if (s.placedAt) ev.push({ type:'milestones', date: s.placedAt, who: s.type === 'container' ? 'Purchasing' : 'Warehouse', text: `${s.name} ${s.type === 'container' ? 'placed with' : 'released to'} ${s.origin.split(',')[0]}.`, where: orderLink(p), p });
+    Object.entries(s.actual || {}).forEach(([i, date]) => { const v = typeof msVendor === 'function' ? msVendor(s, Number(i)) : null; ev.push({ type:'milestones', date, who: v ? v.name : 'Recorded', text: `${s.name}: ${names[i].toLowerCase()}.`, where: orderLink(p), p }); });
+    if (s.booking && s.booking.confirmed) ev.push({ type:'vendors', date: s.booking.confirmed, who: s.forwarder ? vendor(s.forwarder).name : 'Forwarder', text: `Booking ${s.booking.ref} confirmed for ${s.name}: departs ${fmt(s.booking.etd)}, arrives ${s.port} ${fmt(s.booking.eta)}.`, where: orderLink(p), p });
+  });
+  changes.forEach(c => {
+    const p = c.po ? po(c.po) : null; const where = `<a href="#changes" class="text-decoration-none">${c.id}</a>${p ? ' · ' + orderLink(p) : ''}`;
+    if (!threads.some(t => t.co === c.id)) ev.push({ type: byParty(c.by), date: c.received, who: c.by.split('·')[1].trim(), text: `Requested: ${c.type}, ${c.from} → ${c.to} (via ${c.via.toLowerCase()}).`, where, p });
+    if (c.status !== 'pending' && c.note) ev.push({ type:'team', date: c.decidedAt || noteDate(c.note), who: c.note.split('·')[0].trim(), text: `${CO_STATUS[c.status][1]} ${c.id}: ${c.type}, ${c.from} → ${c.to}.`, where, p });
+  });
+  pos.forEach(p => p.activity.forEach(([date, text]) => {
+    if (/placed with|delivered|released to|CO-\d{4} (approved|rejected|modified)/i.test(text)) return;
+    if (/auto-reply|reminder sent|replied|received|parsed|started a portal chat/i.test(text) && threads.some(t => t.po === p.id && t.msgs.some(m => m[1].startsWith(date)))) return;
+    const type = /overrid|marked complete|renamed|held|released from hold|for signature|recorded|Milestones recalculated/i.test(text) ? 'team' : /customer|portal/i.test(text) ? 'customers' : 'system';
+    ev.push({ type, date, who: type === 'team' ? 'Team' : type === 'customers' ? cust(p.customer).name : 'System', text, where: orderLink(p), p });
+  }));
+  return ev.filter(e => e.date <= iso(TODAY)).sort((a, b) => (b.date + (b.time || '12:00')).localeCompare(a.date + (a.time || '12:00')));
+}
+const dayLabel = date => { const n = diffDays(TODAY, date); return n === 0 ? 'Today' : n === 1 ? 'Yesterday' : fmtLong(date); };
+function viewFeed(type) {
+  const all = feedEvents();
+  const list = all.filter(e => (!type || e.type === type) && (T.feedFilter === 'all' || (e.p && e.p.customer === T.feedFilter)) && matches(e.who, e.text, e.p ? e.p.job : ''));
+  const shown = list.slice(0, feedLimit);
+  const typeTabs = pillsUl([['feed', 'All', null], ...FEED_TYPES.map(t => ['feed-' + t[0], t[1], null])], type ? 'feed-' + type : 'feed');
+  const tools = searchBox('Search the feed…') + filterTool('feedFilter', custOptions());
+  let lastDay = null;
+  const rows = shown.map(e => { const [ic, icon] = FEED_ICON[e.type]; const head = e.date !== lastDay ? `<li class="feed-day">${dayLabel(e.date)}</li>` : ''; lastDay = e.date;
+    return head + `<li class="feed-item"><div class="timeline-icon ${ic}"><i class="bi bi-${icon}"></i></div><div class="minw0 flex-grow-1"><div class="feed-line"><b>${esc(e.who)}</b> <span class="feed-text">${esc(e.text.replace(/\s+/g, ' ').slice(0, 220))}${e.text.length > 220 ? '…' : ''}</span></div><div class="feed-meta">${e.where}${e.time ? `<span class="mono">${e.time}</span>` : ''}</div></div></li>`; }).join('');
+  return dashHeader() + pageNav(dashTabs('feed'), tools) + typeTabs +
+    tabDesc(type ? FEED_TYPES.find(t => t[0] === type)[2] : 'Everything that happened, newest first: what the system sent, what customers and vendors said, milestones recorded, and decisions the team made.') +
+    `<div class="detail-card grow"><ul class="feed-list">${rows || '<li class="empty">Nothing matches.</li>'}</ul>${list.length > shown.length ? `<div class="text-center py-3 border-top"><button class="btn btn-sm btn-outline-secondary" onclick="act.feedMore()">Show earlier activity (${list.length - shown.length} more)</button></div>` : `<div class="detail-card-footer">Showing all ${list.length} events</div>`}</div>`;
+}
+let feedLimit = 40;
+
+/* Overview: the glance. Summary cards, what needs attention in production, the to-do mix, and performance over time. */
 function viewToday() {
   const inProd = shipments.filter(s => s.placedAt && !isDelivered(s)).length;
   const queued = shipments.filter(s => !s.placedAt).length;
   const pendingCO = changes.filter(c => c.status === 'pending').length;
   const atRisk = shipments.filter(s => health(s).k === 'crit').length;
   const unknown = shipments.filter(s => !s.needBy).length;
-  const acts = nextActions();
-  return pageHeader('Dashboard', 'What needs a decision today, and how the business is trending.', `<span class="proto-tag">Monday, Oct 26, 2026</span>`) +
-  `<div class="stat-cards">${statCard('Shipments in production', inProd, 'box-seam', 'blue', { route:'orders-production', group:'shipment', label:'Production shipments' })}${statCard('Shipments queued', queued, 'hourglass-split', 'gray', { route:'orders-queue', group:'shipment', label:'Queued shipments' })}${statCard('Need-by dates unknown', unknown, 'calendar-x', 'amber', { route:'orders-queue', group:'shipment', label:'Queue by shipment' })}${statCard('At risk of missing need-by', atRisk, 'exclamation-triangle', atRisk ? 'red' : 'green', { route:'orders-production', group:'shipment', label:'Production by shipment' })}${statCard('Change requests pending', pendingCO, 'arrow-left-right', pendingCO ? 'amber' : 'green', { route:'changes', label:'Pending change requests' })}</div>
-  ${perfTable()}
-  <div class="detail-card mb-3"><div class="detail-card-header"><h3>Next intended actions</h3><span class="card-note">${acts.length} proposed</span></div>
-    <ul class="action-list">${acts.length ? acts.map(a => actionItem(a.k, esc(a.t), esc(a.d), `<a class="btn btn-sm btn-outline-secondary" href="#${a.link}">Open</a>${a.open ? '' : a.fn ? `<button class="btn btn-sm btn-primary" onclick="${a.fn}">${esc(a.btn)}</button>` : `<button class="btn btn-sm btn-primary" onclick="act.completeAction('${a.id}', '${esc(a.toast).replace(/'/g, '&#39;')}')">${esc(a.btn)}</button>`}`)).join('') : '<li class="empty">Nothing waiting. The system proposes the next action as emails arrive or milestones come due.</li>'}</ul></div>
-  <div class="dashboard-grid">
-    <div class="detail-card"><div class="detail-card-header"><h3>Moving this week</h3><a class="card-action" href="#orders-production">View all</a></div>
-      <ul class="action-list">${shipments.filter(s => s.placedAt && !isDelivered(s)).map(s => { const n = nextMs(s); return actionItem(health(s).k, `<a href="#po-${s.po.slice(3)}" class="text-decoration-none">${esc(po(s.po).job)}</a> <span class="text-body-secondary fw-normal">· ${esc(s.name)}</span>`, `${esc(stageName(s))} → next: ${esc(n.name)} <span class="mono">${fmt(n.date)}</span>`, pill(health(s))); }).join('')}</ul></div>
-    <div class="detail-card"><div class="detail-card-header"><h3>Recent intake</h3><a class="card-action" href="#intake">View all</a></div>
-      <ul class="action-list">${intake.slice(0, 4).map(i => actionItem({queued:'warn',change:'info',review:'crit',resolved:'muted'}[i.result], `<span class="d-block text-truncate" style="font-size:13px">${esc(i.subject)}</span>`, `${esc(i.from)} · ${esc(i.received.slice(5))}`, intakeBadge(i))).join('')}</ul></div>
-  </div>`;
+  const acts = nextActions().map(a => ({ ...a, type: todoType(a) }));
+  const attention = shipments.filter(needsAttention).sort((a, b) => SEV_ORDER[health(a).k] - SEV_ORDER[health(b).k]);
+  const urgent = acts.filter(a => a.k === 'crit').length;
+  return dashHeader() + pageNav(dashTabs('today'), '') +
+  `<div class="stat-cards">${statCard('Shipments in production', inProd, 'box-seam', 'blue', { route:'orders-production', group:'shipment', label:'Production shipments' })}${statCard('Shipments queued', queued, 'hourglass-split', 'gray', { route:'orders-queue', group:'shipment', label:'Queued shipments' })}${statCard('Need-by dates unknown', unknown, 'calendar-x', 'amber', { route:'orders-queue', group:'shipment', label:'Queue by shipment' })}${statCard('At risk of missing need-by', atRisk, 'exclamation-triangle', atRisk ? 'red' : 'green', { route:'orders-production', group:'shipment', label:'Production by shipment' })}${statCard('Change requests pending', pendingCO, 'arrow-left-right', pendingCO ? 'amber' : 'green', { route:'todo-decisions', label:'Decisions in To do' })}</div>
+  <div class="dashboard-grid mb-3">
+    <div class="detail-card"><div class="detail-card-header"><h3>Needs attention in production</h3><a class="card-action" href="#orders-production" onclick="openAttention()">View all ${attention.length}</a></div>
+      <ul class="action-list">${attention.length ? attention.slice(0, 5).map(s => { const n = nextMs(s); return actionItem(health(s).k, `<a href="#po-${s.po.slice(3)}" class="text-decoration-none">${esc(po(s.po).job)}</a> <span class="text-body-secondary fw-normal">· ${esc(s.name)}</span>`, `${esc(stageName(s))}${n ? ` → next: ${esc(n.name)} <span class="mono">${fmt(n.date)}</span>` : ''}`, pill(health(s))); }).join('') : '<li class="empty">Every placed shipment is on track.</li>'}</ul></div>
+    <div class="detail-card"><div class="detail-card-header"><h3>To do</h3><a class="card-action" href="#todo">Open to do</a></div>
+      <ul class="meta-list px-3">${TODO_TYPES.map(t => { const n = acts.filter(a => a.type === t[0]).length; const crit = acts.some(a => a.type === t[0] && a.k === 'crit'); return `<li class="meta-item"><a class="meta-label text-decoration-none" href="#todo-${t[0]}">${t[1]}</a><span class="meta-value">${n ? `<span class="badge ${crit ? 'bg-danger' : 'bg-warning text-dark'}">${n}</span>` : '<span class="text-body-secondary fw-normal">—</span>'}</span></li>`; }).join('')}</ul>
+      <div class="detail-card-footer">${urgent ? `<b class="text-danger">${urgent} blocking production.</b> ` : ''}${acts.length} actions proposed in all.</div></div>
+  </div>
+  ${perfTable()}`;
 }
+
 
 const intakeBadge = i => ({ queued: sb('pending', 'Queued · auto-replied'), change: sb('info', 'Change request'), review: sb('danger', 'Needs a human'), resolved: sb('inactive', 'Handled') }[i.result]);
 const ordersTabs = tab => `<ul class="nav nav-tabs">
@@ -1240,7 +1349,7 @@ const TAB_DESC = {
   production: 'The production line: orders placed with a factory or warehouse and moving through milestones to delivery and invoice.',
 };
 const ORDER_SORTS = [['default','Default order'],['customer','Customer A–Z'],['sqft','Sq ft, largest first'],['needby','Need-by, soonest first']];
-const orderTools = () => groupTool() + filterTool('orderFilter', custOptions()) + sortTool('orderSort', ORDER_SORTS);
+const orderTools = () => groupTool() + filterTool('orderFilter', [['all','All customers'],['attention','Needs attention'], ...customers.map(c => [c.id, c.name])]) + sortTool('orderSort', ORDER_SORTS);
 
 function viewIntake() {
   const rows = intake.filter(i => (T.intakeFilter === 'all' || i.result === T.intakeFilter) && matches(i.subject, i.from, i.match)).sort((a, b) => T.intakeSort === 'oldest' ? (a.received > b.received ? 1 : -1) : (b.received > a.received ? 1 : -1));
@@ -1258,7 +1367,7 @@ function viewIntake() {
 
 function viewOrdersByShipment(tab) {
   const FAR = new Date(2100,0,1);
-  let list = shipments.filter(s => (tab === 'queue' ? !s.placedAt : !!s.placedAt)).map(s => ({ s, p: po(s.po) })).filter(({ s, p }) => (T.orderFilter === 'all' || p.customer === T.orderFilter) && matches(s.name, p.id, p.job, cust(p.customer).name, p.site, refText(s)))
+  let list = shipments.filter(s => (tab === 'queue' ? !s.placedAt : !!s.placedAt)).map(s => ({ s, p: po(s.po) })).filter(({ s, p }) => (T.orderFilter === 'all' || (T.orderFilter === 'attention' ? ['crit','warn'].includes(health(s).k) : p.customer === T.orderFilter)) && matches(s.name, p.id, p.job, cust(p.customer).name, p.site, refText(s)))
     .sort((a, b) => tab === 'queue' ? ((placeBy(a.s) || FAR) - (placeBy(b.s) || FAR)) : ((nextMs(a.s)?.date || FAR) - (nextMs(b.s)?.date || FAR)));
   if (T.orderSort === 'customer') list.sort((a, b) => cust(a.p.customer).name.localeCompare(cust(b.p.customer).name));
   if (T.orderSort === 'sqft') list.sort((a, b) => b.s.sqft - a.s.sqft);
@@ -1277,7 +1386,7 @@ function viewOrders(tab) {
   const head = ordersHeader() + pageNav(ordersTabs(tab), searchBox(groupBy === 'shipment' ? 'Search shipments or any PO, order, or booking #…' : 'Search orders or any PO, order, or booking #…') + orderTools()) + tabDesc(TAB_DESC[tab]);
   if (groupBy === 'shipment') return head + viewOrdersByShipment(tab);
   const FAR = new Date(2100,0,1);
-  const list = pos.filter(p => (tab === 'queue' ? p.lane === 'queue' : p.lane === 'production') && (T.orderFilter === 'all' || p.customer === T.orderFilter) && matches(p.id, p.job, cust(p.customer).name, p.site, shipsOf(p.id).map(refText).join(' ')));
+  const list = pos.filter(p => (tab === 'queue' ? p.lane === 'queue' : p.lane === 'production') && (T.orderFilter === 'all' || (T.orderFilter === 'attention' ? ['crit','warn'].includes(poHealth(p)) : p.customer === T.orderFilter)) && matches(p.id, p.job, cust(p.customer).name, p.site, shipsOf(p.id).map(refText).join(' ')));
   if (T.orderSort === 'customer') list.sort((a, b) => cust(a.customer).name.localeCompare(cust(b.customer).name));
   if (T.orderSort === 'sqft') list.sort((a, b) => b.sqft - a.sqft);
   if (T.orderSort === 'needby') { const first = p => { const ds = shipsOf(p.id).filter(s => s.needBy).map(s => d(s.needBy)); return ds.length ? Math.min(...ds) : FAR; }; list.sort((a, b) => first(a) - first(b)); }
@@ -1663,7 +1772,11 @@ const lateInProduction = () => shipments.filter(s => s.placedAt && !isDelivered(
 const needsHuman = () => intake.filter(i => i.result === 'review').length;
 const ordersAlert = () => firstOf(red(needsHuman() + missedPlaceBy() + lateInProduction()), yellow(pos.filter(p => p.lane === 'queue').length));
 const NAV = [
-  { id:'today', label:'Dashboard', icon:'grid-1x2', alert: () => { const a = nextActions(); return firstOf(red(a.filter(x => x.k === 'crit').length), yellow(a.filter(x => x.k === 'warn').length)); } },
+  { id:'dashboard', label:'Dashboard', icon:'grid-1x2', link:'today', alert: () => todoAlert(), children: [
+      { id:'today', label:'Overview' },
+      { id:'todo', label:'To do', alert: () => todoAlert(), hint:'everything that needs a person' },
+      { id:'feed', label:'Feed', hint:'everything that happened' },
+    ] },
   { id:'orders', label:'Orders', icon:'box-seam', link:'orders-production', alert: ordersAlert, children: [
       { id:'intake', label:'Intake', alert: () => red(needsHuman()), hint:'new POs, new customers' },
       { id:'orders-queue', label:'Queue', alert: () => firstOf(red(missedPlaceBy()), yellow(pos.filter(p => p.lane === 'queue').length)), hint:'waiting or paused' },
@@ -1685,6 +1798,8 @@ const navBadge = al => al ? `<span class="badge ${BADGE[al.sev]}" title="${al.n}
 function activeNav() {
   const pm = route.match(/^po-(\d+)/); if (pm) { const p = po('PO-' + pm[1]); return p && p.lane === 'queue' ? 'orders-queue' : 'orders-production'; }
   if (route.startsWith('ship-')) { const s = ship(route.slice(5)); const p = s && po(s.po); return p && p.lane === 'queue' ? 'orders-queue' : 'orders-production'; }
+  if (route.startsWith('todo')) return 'todo';
+  if (route.startsWith('feed')) return 'feed';
   if (route.startsWith('customer-')) return 'customers';
   if (route.startsWith('vendor-')) return 'vendors';
   if (route.startsWith('contact-')) return 'contacts';
@@ -1710,6 +1825,7 @@ function renderSidebar() {
 function crumbs() {
   const items = [['Home', 'today']];
   if (route === 'today') return [['Dashboard', null]];
+  if (route.startsWith('todo') || route.startsWith('feed')) { const isTodo = route.startsWith('todo'); const sub = route.split('-')[1]; const list = isTodo ? TODO_TYPES : FEED_TYPES; return [['Dashboard', 'today'], [isTodo ? 'To do' : 'Feed', sub ? route.split('-')[0] : null], ...(sub ? [[list.find(t => t[0] === sub)?.[1] || sub, null]] : [])]; }
   if (route === 'intake') items.push(['Orders', 'orders-production'], ['Intake', null]);
   else if (route === 'orders-queue') items.push(['Orders', 'orders-production'], ['Queue', null]);
   else if (route === 'orders-production') items.push(['Orders', 'orders-production'], ['Production', null]);
@@ -1816,7 +1932,9 @@ function renderMain() {
     return;
   }
   let body;
-  if (route === 'intake') body = viewIntake();
+  if (route === 'todo' || route.startsWith('todo-')) body = viewTodo(route.split('-')[1] || null);
+  else if (route === 'feed' || route.startsWith('feed-')) body = viewFeed(route.split('-')[1] || null);
+  else if (route === 'intake') body = viewIntake();
   else if (route === 'orders-queue') body = viewOrders('queue');
   else if (route === 'orders-production') body = viewOrders('production');
   else if (/^po-\d+/.test(route)) { const m = route.match(/^po-(\d+)(?:-(\w+))?$/); body = m ? viewPO('PO-' + m[1], m[2] || 'shipments') : viewToday(); }
