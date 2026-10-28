@@ -721,16 +721,20 @@ const intake = [
 ];
 
 /* The acknowledgement: Surface Edge's confirmation of what will ship and when. Customer POs ask for it within 48 hours, and the customer
-   signs it before the factory order goes out. Today it is a Navigator printout edited by hand; here it is drafted from the order. */
+   signs it before the factory order goes out. It comes out of Navigator: purchasing enters the order and sends the acknowledgement to
+   customer service the same day, and customer service sends it to the customer (Oct 28). */
 const ACKS = { 'PO-4441':{ sent:'2026-03-03', signed:'2026-03-05' }, 'PO-4460':{ sent:'2026-06-08', signed:'2026-06-09' }, 'PO-4471':{ sent:'2026-05-29', signed:'2026-05-30' }, 'PO-4495':{ sent:'2026-08-21', signed:'2026-08-24' }, 'PO-4488':{ sent:'2026-09-03', signed:'2026-09-04' }, 'PO-4490':{ sent:'2026-10-14', signed:'2026-10-15' }, 'PO-4502':{ sent:'2026-10-02', signed:'2026-10-05' }, 'PO-4503':{ sent:'2026-10-02', signed:'2026-10-05' }, 'PO-4510':{ sent:'2026-10-26', signed:null } };
 pos.forEach(p => { p.ack = ACKS[p.id] || { sent:null, signed:null }; });
+/* fromPurchasing: the day purchasing sent the Navigator acknowledgement to customer service. Sample: each one already sent came over that day. */
+pos.forEach(p => { p.ack.fromPurchasing = p.ack.sent; });
 const ackDue = p => addDays(p.received, 2);
-let ackOpen = null;   // the order whose acknowledgement draft is open
+let ackOpen = null;   // the order whose summary is open
 function ackStatus(p) {
   if (p.ack.signed) return { k:'good', t:`Signed ${fmt(p.ack.signed)}` };
   if (p.ack.sent) return { k: diffDays(TODAY, p.ack.sent) > 2 ? 'warn' : 'info', t:`Sent ${fmt(p.ack.sent)}, waiting for signature` };
   const n = diffDays(ackDue(p), TODAY);
-  return n < 0 ? { k:'crit', t:`Not sent, ${-n}d past 48 hours` } : { k:'warn', t:`Not sent, due ${fmt(ackDue(p))}` };
+  if (!p.ack.fromPurchasing) return n < 0 ? { k:'crit', t:`Not in Navigator yet, ${-n}d past 48 hours` } : { k:'warn', t:`Waiting on purchasing, due ${fmt(ackDue(p))}` };
+  return n < 0 ? { k:'crit', t:`Not sent, ${-n}d past 48 hours` } : { k:'warn', t:`From purchasing ${fmt(p.ack.fromPurchasing)}, not sent` };
 }
 /* What the customer still owes, in their words (internal items stay off the acknowledgement). */
 function ackNeeds(p) {
@@ -760,8 +764,8 @@ function ackDoc(p) {
 }
 function ackCard(p) {
   const st = ackStatus(p), c = cust(p.customer);
-  const modal = ackOpen === p.id ? `<div style="position:fixed;inset:0;background:rgba(0,0,0,.55);z-index:1080;display:flex;align-items:flex-start;justify-content:center;padding:40px 16px;overflow:auto" onclick="if(event.target===this)act.ackPreview('${p.id}')"><div class="detail-card" style="max-width:760px;width:100%;margin:0"><div class="detail-card-header"><h3>Order acknowledgement · draft</h3><span class="card-note">built from the order, not a hand-edited PDF</span></div><div class="detail-card-body">${ackDoc(p)}</div><div class="detail-card-footer d-flex justify-content-end gap-2 flex-wrap"><button class="btn btn-sm btn-outline-secondary" onclick="act.ackPreview('${p.id}')">Close</button>${p.ack.sent ? '' : `<button class="btn btn-sm btn-primary" onclick="act.ackSend('${p.id}')"><i class="bi bi-send me-1"></i>Send to ${esc(c.contact)}</button>`}</div></div></div>` : '';
-  return detailCard('Acknowledgement', '', `<div class="d-flex align-items-center justify-content-between gap-2 flex-wrap">${pill(st)}<div class="d-flex gap-2"><button class="btn btn-sm btn-outline-secondary" onclick="act.ackPreview('${p.id}')">${p.ack.sent ? 'View' : 'Preview'}</button>${p.ack.sent && !p.ack.signed ? `<button class="btn btn-sm btn-outline-secondary" onclick="act.ackSigned('${p.id}')">Mark signed</button>` : ''}</div></div><div class="item-sub mt-2">Due within 48 hours of the PO (${fmt(ackDue(p))}). The customer signs before the factory order goes out.</div>${modal}`);
+  const modal = ackOpen === p.id ? `<div style="position:fixed;inset:0;background:rgba(0,0,0,.55);z-index:1080;display:flex;align-items:flex-start;justify-content:center;padding:40px 16px;overflow:auto" onclick="if(event.target===this)act.ackPreview('${p.id}')"><div class="detail-card" style="max-width:760px;width:100%;margin:0"><div class="detail-card-header"><h3>Order summary</h3><span class="card-note">what the order says, to check the Navigator acknowledgement against</span></div><div class="detail-card-body">${ackDoc(p)}</div><div class="detail-card-footer d-flex justify-content-end gap-2 flex-wrap"><button class="btn btn-sm btn-outline-secondary" onclick="act.ackPreview('${p.id}')">Close</button>${p.ack.sent || !p.ack.fromPurchasing ? '' : `<button class="btn btn-sm btn-primary" onclick="act.ackSend('${p.id}')"><i class="bi bi-send me-1"></i>Send the Navigator copy to ${esc(c.contact)}</button>`}</div></div></div>` : '';
+  return detailCard('Acknowledgement', 'from Navigator', `<div class="d-flex align-items-center justify-content-between gap-2 flex-wrap">${pill(st)}<div class="d-flex gap-2 flex-wrap">${p.ack.fromPurchasing ? '' : `<button class="btn btn-sm btn-outline-secondary" onclick="act.ackFromPurchasing('${p.id}')">Mark received from purchasing</button>`}<button class="btn btn-sm btn-outline-secondary" onclick="act.ackPreview('${p.id}')">Order summary</button>${p.ack.sent && !p.ack.signed ? `<button class="btn btn-sm btn-outline-secondary" onclick="act.ackSigned('${p.id}')">Mark signed</button>` : ''}</div></div>${p.ack.fromPurchasing ? `<div class="item-sub mt-2">From purchasing <span class="mono">${fmt(p.ack.fromPurchasing)}</span> · sent <span class="mono">${fmt(p.ack.sent)}</span> · signed <span class="mono">${fmt(p.ack.signed)}</span></div>` : ''}<div class="item-sub mt-2">Purchasing enters the order in Navigator and sends its acknowledgement to customer service, who sends it to the customer. Due within 48 hours of the PO (${fmt(ackDue(p))}); the customer signs before the factory order goes out.</div>${modal}`);
 }
 
 /* Chats: every inbound email or portal message is merged into a thread by sender and subject. status: open = their move is done, ours is due; awaiting = we replied, waiting on them; closed = resolved. */
@@ -962,7 +966,8 @@ function nextActions() {
   shipments.filter(s => !s.placedAt && s.needBy).forEach(s => { const h = health(s);
     if (h.k === 'crit' || h.k === 'warn') a.push({ id:'place-'+s.id, k:h.k, t:`Place ${s.name} of ${po(s.po).job} with ${s.origin}`, d:s.asap ? `ASAP on the customer's PO. Placed today, it delivers ${fmt(eta(s))}.` : h.k === 'crit' ? `Place-by date passed. Earliest delivery now ${fmt(addDays(TODAY, totalDays(s)))} against need-by ${fmt(s.needBy)}.` : `Last day to place and still make ${fmt(s.needBy)} is ${fmt(placeBy(s))}.`, link:'po-'+s.po.slice(3), btn:'Approve: place order', toast:`Factory PO drafted for ${s.name}. Ryan to send to ${s.origin}.` }); });
   shipments.filter(s => s.placedAt && s.needBy && !isDelivered(s) && diffDays(eta(s), s.needBy) > 0).forEach(s => a.push({ id:'late-'+s.id, k:'crit', t:`Tell ${cust(po(s.po).customer).name}: ${s.name} will arrive ${fmt(eta(s))}`, d:`${po(s.po).job} · need-by ${fmt(s.needBy)} · ${diffDays(eta(s), s.needBy)} days late. Offer stock from Wanke Georgia to start.`, link:'po-'+s.po.slice(3), btn:'Approve: send notice', toast:`Late notice sent to ${cust(po(s.po).customer).contact}, flagged "Action required".` }));
-  pos.filter(p => !p.ack.sent).forEach(p => a.push({ id:'ack-'+p.id, k: diffDays(ackDue(p), TODAY) < 0 ? 'crit' : 'warn', t:`Send the acknowledgement for ${p.job}`, d:`The customer's PO asks for it within 48 hours: due ${fmt(ackDue(p))}. Drafted from the order; preview it before it goes.`, link:'po-'+p.id.slice(3), btn:'Approve: send', fn:`act.ackSend('${p.id}')` }));
+  pos.filter(p => !p.ack.sent && !p.ack.fromPurchasing).forEach(p => a.push({ id:'place-nav-'+p.id, k: diffDays(ackDue(p), TODAY) < 0 ? 'crit' : 'warn', t:`Enter ${p.job} in Navigator and send its acknowledgement to customer service`, d:`The customer's PO asks for the acknowledgement within 48 hours: due ${fmt(ackDue(p))}.`, link:'po-'+p.id.slice(3), btn:'Approve: mark done', fn:`act.ackFromPurchasing('${p.id}')` }));
+  pos.filter(p => !p.ack.sent && p.ack.fromPurchasing).forEach(p => a.push({ id:'ack-'+p.id, k: diffDays(ackDue(p), TODAY) < 0 ? 'crit' : 'warn', t:`Send the acknowledgement for ${p.job}`, d:`Purchasing sent the Navigator copy ${fmt(p.ack.fromPurchasing)}. The customer's PO asks for it within 48 hours: due ${fmt(ackDue(p))}. Check it against the order summary before it goes.`, link:'po-'+p.id.slice(3), btn:'Approve: send', fn:`act.ackSend('${p.id}')` }));
   pos.filter(p => p.ack.sent && !p.ack.signed && diffDays(TODAY, p.ack.sent) > 2).forEach(p => a.push({ id:'acksign-'+p.id, k:'info', t:`Chase the signed acknowledgement for ${p.job}`, d:`Sent ${fmt(p.ack.sent)}. The factory order waits for the signature.`, link:'po-'+p.id.slice(3), btn:'Approve: send reminder', toast:`Reminder sent to ${cust(p.customer).contact}.` }));
   pos.filter(p => p.lane === 'queue').forEach(p => { const r = queueReasons(p); if (!r.length) return;
     const waitingOn = p.gate.some(g => g[3] === 'pending' && g[2] === 'Customer') || shipsOf(p.id).some(s => !s.needBy);
@@ -1060,6 +1065,7 @@ const act = {
   portalCustomer(id) { portalCustomer = id; render(); },
   intakeResolve(id) { intake.find(x => x.id === id).result = 'resolved'; toast('<b>Marked handled.</b> Sender asked for an unlocked PDF.'); render(); },
   ackPreview(poId) { ackOpen = ackOpen === poId ? null : poId; render(); },
+  ackFromPurchasing(poId) { const p = po(poId); p.ack.fromPurchasing = iso(TODAY); p.activity.push([iso(TODAY), 'Entered in Navigator; the acknowledgement went to customer service.']); toast('<b>Recorded.</b> The Navigator acknowledgement is with customer service to send.'); render(); },
   ackSend(poId) { const p = po(poId); p.ack.sent = iso(TODAY); ackOpen = null; done.add('ack-' + poId); p.activity.push([iso(TODAY), `Acknowledgement sent to ${cust(p.customer).contact} for signature.`]); toast(`<b>Acknowledgement sent</b> to ${esc(cust(p.customer).contact)}. The factory order waits for the signature.`); render(); },
   ackSigned(poId) { const p = po(poId); p.ack.signed = iso(TODAY); const g = p.gate.find(x => x[0] === 'ack'); if (g) g[3] = 'done'; p.activity.push([iso(TODAY), `Signed acknowledgement received from ${cust(p.customer).contact}.`]); toast('<b>Signed acknowledgement recorded.</b>'); render(); },
   stub(msg) { toast(msg); },
