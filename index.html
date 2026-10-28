@@ -1610,6 +1610,41 @@ function viewChanges() {
   `<div class="detail-card grow"><ul class="action-list">${list.length ? list.map(c => coRow(c)).join('') : `<li class="empty">No ${coTab} change requests${coContext !== 'All' ? ' for ' + coContext.toLowerCase() + 's' : ''}.</li>`}</ul>${tableFooter(list.length, 'change requests')}</div>`;
 }
 
+/* Notes and a link to the job folder on every order, from the scope page ("notes and links to the job folder").
+   Notes are short, dated and signed. The folder link opens wherever the job's documents live (OneDrive today). Sample values. */
+const ORDER_NOTES = {
+  'PO-4471': { folder:'Jobs/ILG/WC-118 Fairway at Westchase', notes:[['2026-09-16', TEAM.marlene, 'Superintendent wants deliveries before 10 am. Call Ray the day before.']] },
+  'PO-4495': { folder:'Jobs/ILG/LF-204 Lakeshore Flats' },
+  'PO-4488': { folder:'Jobs/TCC/2207 Peachtree Commons Phase 2', notes:[['2026-09-03', TEAM.ryan, 'White boxes and generic labels on this job. Already on the factory PO.'], ['2026-10-24', TEAM.melissa, 'Amenity floor may start early. See the balance pallet change request.']] },
+  'PO-4515': { notes:[['2026-10-26', TEAM.marlene, 'Isaac forwarded this one. Asked him to have Luis send POs to orders@ directly.']] },
+};
+pos.forEach(p => { const x = ORDER_NOTES[p.id] || {}; p.notes = (x.notes || []).map(([at, by, text]) => ({ at, by, text })); if (x.folder) p.folder = x.folder; });
+let folderEditing = null;   // the order whose folder link is being edited
+const folderRow = p => folderEditing === p.id
+  ? `<div class="input-group input-group-sm"><input class="form-control" id="folder-${p.id}" value="${esc(p.folder || '')}" placeholder="Paste the folder link" onkeydown="if(event.key==='Enter')act.saveFolder('${p.id}');if(event.key==='Escape')act.cancelFolder()"><button class="btn btn-primary" onclick="act.saveFolder('${p.id}')">Save</button></div>`
+  : p.folder ? `<a href="#po-${p.id.slice(3)}" onclick="event.preventDefault();act.openFolder('${p.id}')"><i class="bi bi-folder2-open me-1"></i>${esc(p.folder.split('/').pop())}</a> <a href="#po-${p.id.slice(3)}" class="fw-normal" onclick="event.preventDefault();act.editFolder('${p.id}')">change</a>`
+  : `<a href="#po-${p.id.slice(3)}" class="fw-normal" onclick="event.preventDefault();act.editFolder('${p.id}')">Add link</a>`;
+function orderNotesCard(p) {
+  const notes = p.notes || [];
+  const list = notes.length ? `<ul class="timeline mb-2">${[...notes].reverse().map(n => `<li class="timeline-item"><div class="timeline-icon gray"><i class="bi bi-sticky"></i></div><div class="minw0"><div class="timeline-text">${esc(n.text)}</div><div class="timeline-time">${esc(n.by)} · ${fmtLong(n.at)}</div></div></li>`).join('')}</ul>` : '<div class="item-sub mb-2">No notes yet.</div>';
+  return detailCard('Notes', notes.length ? String(notes.length) : '', `${list}<label class="visually-hidden" for="note-${p.id}">Add a note</label><textarea class="form-control form-control-sm" id="note-${p.id}" rows="2" placeholder="Add a note for the team…"></textarea><div class="d-flex justify-content-end mt-2"><button class="btn btn-sm btn-outline-secondary" onclick="act.addNote('${p.id}')"><i class="bi bi-sticky me-1"></i>Add note</button></div>`);
+}
+Object.assign(act, {
+  addNote(poId) {
+    const el = document.getElementById('note-' + poId), text = (el?.value || '').trim(); if (!text) { el?.focus(); return; }
+    const p = po(poId); (p.notes = p.notes || []).push({ at:iso(TODAY), by:TEAM[ME], text }); p.activity.push([iso(TODAY), `${TEAM[ME]} added a note.`]);
+    toast('<b>Note added.</b> Everyone on the order sees it.'); render();
+  },
+  editFolder(poId) { folderEditing = poId; render(); setTimeout(() => document.getElementById('folder-' + poId)?.focus(), 0); },
+  saveFolder(poId) {
+    const v = (document.getElementById('folder-' + poId)?.value || '').trim(), p = po(poId);
+    if (v !== (p.folder || '')) { if (v) p.folder = v; else delete p.folder; p.activity.push([iso(TODAY), v ? `${TEAM[ME]} linked the job folder.` : `${TEAM[ME]} removed the job folder link.`]); toast(v ? '<b>Job folder linked.</b>' : '<b>Link removed.</b>'); }
+    folderEditing = null; render();
+  },
+  cancelFolder() { folderEditing = null; render(); },
+  openFolder(poId) { toast(`<b>Prototype.</b> This would open ${esc(po(poId).folder)} in OneDrive.`); },
+});
+
 /* Sidebar shared by the order page and its shipment edit page: gate checklist, source, attachment. */
 function poSidebar(p, c) {
   const gateDone = p.gate.filter(g => g[3] !== 'pending').length;
@@ -1622,9 +1657,11 @@ function poSidebar(p, c) {
       <li class="meta-item"><span class="meta-label">Format</span><span class="meta-value">${esc(p.source)}</span></li>
       <li class="meta-item"><span class="meta-label">Contact</span><span class="meta-value">${esc(c.contact)}<div class="fw-normal text-body-secondary mono">${esc(c.email)}</div></span></li>
       <li class="meta-item"><span class="meta-label">Sales rep</span><span class="meta-value">${esc(p.rep)}</span></li>
+      <li class="meta-item"><span class="meta-label">Job folder</span><span class="meta-value">${folderRow(p)}</span></li>
       <li class="meta-item"><span class="meta-label">Lead times in portal</span><span class="meta-value">${c.showLeadTimes ? 'Visible' : 'Hidden'} <a href="#po-${p.id.slice(3)}" onclick="act.toggleLead('${c.id}')" class="fw-normal">change</a></span></li></ul>`)}
     ${ackCard(p)}
-    ${detailCard('Attachments', '', `<div class="d-flex align-items-center gap-2"><div class="stat-icon gray" style="width:36px;height:36px"><i class="bi bi-file-earmark-pdf"></i></div><div class="minw0 flex-grow-1"><div class="text-truncate" style="font-size:13px;font-weight:500">${esc(p.source.replace(/^PDF \(|\)$/g, '') || 'Email body')}</div><div class="item-sub">Original as received · ${fmt(p.received)}</div></div><a href="#po-${p.id.slice(3)}" class="card-action" style="font-size:13px;font-weight:500;text-decoration:none" onclick="act.stub('<b>Prototype.</b> The original would open here.')">Open</a></div>`)}`;
+    ${detailCard('Attachments', '', `<div class="d-flex align-items-center gap-2"><div class="stat-icon gray" style="width:36px;height:36px"><i class="bi bi-file-earmark-pdf"></i></div><div class="minw0 flex-grow-1"><div class="text-truncate" style="font-size:13px;font-weight:500">${esc(p.source.replace(/^PDF \(|\)$/g, '') || 'Email body')}</div><div class="item-sub">Original as received · ${fmt(p.received)}</div></div><a href="#po-${p.id.slice(3)}" class="card-action" style="font-size:13px;font-weight:500;text-decoration:none" onclick="act.stub('<b>Prototype.</b> The original would open here.')">Open</a></div>`)}
+    ${orderNotesCard(p)}`;
 }
 const activityIcon = text => { const ic = /approved|delivered|complete|moved/i.test(text) ? 'green' : /rejected|missed|late|override/i.test(text) ? 'amber' : /received|sent|reminder/i.test(text) ? 'blue' : 'gray'; return [ic, { green:'check-lg', amber:'exclamation-lg', blue:'envelope', gray:'dot' }[ic]]; };
 
