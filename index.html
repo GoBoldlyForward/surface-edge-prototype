@@ -560,6 +560,10 @@ const po = id => pos.find(p => p.id === id);
 /* Two more items every order needs before it goes to the factory, from the approved scope: the customer's signed acknowledgement and a delivery contact. [acknowledgement, delivery contact] */
 const GATE_ADDED = { 'PO-4441':['done','done'], 'PO-4460':['done','done'], 'PO-4471':['done','done'], 'PO-4495':['done','done'], 'PO-4488':['done','done'], 'PO-4490':['done','done'], 'PO-4502':['done','pending'], 'PO-4503':['done','pending'], 'PO-4510':['pending','pending'], 'PO-4515':['pending','pending'] };
 pos.forEach(p => { const [ack, dc] = GATE_ADDED[p.id] || ['pending', 'pending']; p.gate.push(['ack', 'Signed acknowledgement', 'Customer', ack], ['delivery', 'Delivery contact', 'Customer', dc]); });
+/* Purchasing can enter an order in Navigator only once its SKUs exist there (Oct 28), and the cover-page checklist says to send new SKU details
+   to purchasing first. An order with a new product or color carries this item until purchasing sets the SKU up. */
+const SKU_NEEDED = { 'PO-4510': 'pending' };   // sample: Riverline Hall waits on a new SKU
+Object.entries(SKU_NEEDED).forEach(([id, status]) => po(id).gate.push(['sku', 'SKU set up in Navigator', 'Purchasing', status]));
 
 /* A shipment is the unit of tracking. `name` is free text the team chooses ("Container 1", "Pallet 1", "Balance").
    stage: index of last completed milestone; placedAt null = not yet placed/released; actual: {index: date} */
