@@ -540,10 +540,16 @@ const pos = [
   { id:'PO-4515', customer:'tcc', job:'Sugarloaf Student Housing', site:'Lawrenceville, GA', sqft:150000, product:'SE Summit Hickory 9" SPC, 22 mil', received:'2026-10-26', source:'PDF (TCC PO 2026-0502)', rep:'Isaac',
     gate:[['package','New account package','Customer','done'],['credit','Credit approved','Credit','done'],['deposit','Deposit','Ops','na'],['prelim','Preliminary notice filed','Ops','pending'],['tax','Tax status confirmed','Ops','done']],
     activity:[['2026-10-26','PO received 6:52 am, forwarded by Isaac rather than sent by the customer.'],['2026-10-26','Parsed: 3 shipments. Need-by Mar 1 for the first only. Ship-to address missing.'],['2026-10-26','Auto-reply sent to Luis Ortega: need ship-to address and need-by for shipments 2–3.']] },
+  { id:'PO-4441', customer:'ilg', job:'Bayou Crossing Apartments', site:'Houston, TX', sqft:100000, product:'SE Harbor Oak 7" SPC, 20 mil', received:'2026-03-02', source:'PDF (ILG PO #87740)', rep:'Meredith',
+    gate:[['package','New account package','Customer','done'],['credit','Credit approved','Credit','done'],['deposit','Deposit','Ops','na'],['prelim','Preliminary notice filed','Ops','done'],['tax','Tax status confirmed','Ops','done']],
+    activity:[['2026-03-02','PO received by email from Dana Whitfield (ILG). Parsed: 2 shipments, need-by Jun 15 and Jul 15.'],['2026-03-06','Both containers placed with Daizhin.'],['2026-06-12','Container 1 delivered to job site. Invoice #29880 sent.'],['2026-07-14','Container 2 delivered to job site. Invoice #30102 sent. Order complete.']] },
+  { id:'PO-4460', customer:'northwind', job:'Maple Court Senior Living', site:'Spokane, WA', sqft:9000, product:'SE Harbor Oak 7" SPC, 20 mil (Portland stock)', received:'2026-06-08', source:'Email body (no attachment)', rep:'Meredith',
+    gate:[['package','New account package','Customer','done'],['credit','Credit approved','Credit','done'],['deposit','Deposit','Ops','na'],['prelim','Preliminary notice filed','Ops','done'],['tax','Tax status confirmed','Ops','done']],
+    activity:[['2026-06-08','PO received as email text. Parsed 9,000 sq ft, need-by Jun 22.'],['2026-06-15','Released to Wanke Portland for pick.'],['2026-06-19','Pallet 1 delivered. Invoice #29951 sent. Order complete.']] },
 ];
 const po = id => pos.find(p => p.id === id);
 /* Two more items every order needs before it goes to the factory, from the approved scope: the customer's signed acknowledgement and a delivery contact. [acknowledgement, delivery contact] */
-const GATE_ADDED = { 'PO-4471':['done','done'], 'PO-4495':['done','done'], 'PO-4488':['done','done'], 'PO-4490':['done','done'], 'PO-4502':['done','pending'], 'PO-4503':['done','pending'], 'PO-4510':['pending','pending'], 'PO-4515':['pending','pending'] };
+const GATE_ADDED = { 'PO-4441':['done','done'], 'PO-4460':['done','done'], 'PO-4471':['done','done'], 'PO-4495':['done','done'], 'PO-4488':['done','done'], 'PO-4490':['done','done'], 'PO-4502':['done','pending'], 'PO-4503':['done','pending'], 'PO-4510':['pending','pending'], 'PO-4515':['pending','pending'] };
 pos.forEach(p => { const [ack, dc] = GATE_ADDED[p.id] || ['pending', 'pending']; p.gate.push(['ack', 'Signed acknowledgement', 'Customer', ack], ['delivery', 'Delivery contact', 'Customer', dc]); });
 
 /* A shipment is the unit of tracking. `name` is free text the team chooses ("Container 1", "Pallet 1", "Balance").
@@ -569,6 +575,9 @@ const shipments = [
   { id:'S18', po:'PO-4515', name:'Container 1', type:'container', sqft:50000, origin:'Daizhin, Korea', port:'Savannah', dest:'Ship-to address missing', needBy:'2027-03-01', placedAt:null, stage:-1, actual:{} },
   { id:'S19', po:'PO-4515', name:'Container 2', type:'container', sqft:50000, origin:'Daizhin, Korea', port:'Savannah', dest:'Ship-to address missing', needBy:null, placedAt:null, stage:-1, actual:{} },
   { id:'S20', po:'PO-4515', name:'Container 3', type:'container', sqft:50000, origin:'Daizhin, Korea', port:'Savannah', dest:'Ship-to address missing', needBy:null, placedAt:null, stage:-1, actual:{} },
+  { id:'S21', po:'PO-4441', name:'Container 1', type:'container', sqft:50000, origin:'Daizhin, Korea', port:'Houston', dest:'Job site, Houston TX', needBy:'2026-06-15', placedAt:'2026-03-06', stage:5, actual:{1:'2026-04-20',2:'2026-04-30',3:'2026-06-01',4:'2026-06-06',5:'2026-06-12'}, invoiced:true },
+  { id:'S22', po:'PO-4441', name:'Container 2', type:'container', sqft:50000, origin:'Daizhin, Korea', port:'Houston', dest:'Job site, Houston TX', needBy:'2026-07-15', placedAt:'2026-03-06', stage:5, actual:{1:'2026-05-21',2:'2026-05-31',3:'2026-07-03',4:'2026-07-09',5:'2026-07-14'}, invoiced:true },
+  { id:'S23', po:'PO-4460', name:'Pallet 1', type:'ltl', sqft:9000, origin:'Wanke Portland', port:null, dest:'Job site, Spokane WA', needBy:'2026-06-22', placedAt:'2026-06-15', stage:3, actual:{1:'2026-06-16',2:'2026-06-17',3:'2026-06-19'}, invoiced:true },
 ];
 /* Need-by is not always a plain date. About half of Ryan's open factory POs say ASAP, some say "2 weeks after" another PO,
    and the date on a customer's PO can differ from the one we commit to on the acknowledgement (requested vs. committed). */
@@ -588,7 +597,9 @@ function resolveNeedBy() {
 }
 const shipsOf = id => shipments.filter(s => s.po === id);
 /* Queue vs. active lives on the shipment, because Ryan holds back individual containers. An order is in production once any of its shipments is placed, and in queue until then. */
-pos.forEach(p => Object.defineProperty(p, 'lane', { get: () => shipsOf(p.id).some(s => s.placedAt) ? 'production' : 'queue' }));
+pos.forEach(p => Object.defineProperty(p, 'lane', { get: () => { const sh = shipsOf(p.id); return sh.length && sh.every(s => s.invoiced && isDelivered(s)) ? 'complete' : sh.some(s => s.placedAt) ? 'production' : 'queue'; } }));
+const LANE_LABEL = { queue:'Queue', production:'Production', complete:'Complete' };
+const completedOn = p => shipsOf(p.id).map(eta).sort((a, b) => b - a)[0];
 const ship = id => shipments.find(s => s.id === id);
 /* The numbers people search by and the delivery details, as they appear on real POs, acknowledgements, and cover pages (sample values).
    Some customers issue one PO per truck, so the customer PO can sit on the shipment. The Navigator order number comes from the
@@ -702,7 +713,7 @@ const intake = [
 
 /* The acknowledgement: Surface Edge's confirmation of what will ship and when. Customer POs ask for it within 48 hours, and the customer
    signs it before the factory order goes out. Today it is a Navigator printout edited by hand; here it is drafted from the order. */
-const ACKS = { 'PO-4471':{ sent:'2026-05-29', signed:'2026-05-30' }, 'PO-4495':{ sent:'2026-08-21', signed:'2026-08-24' }, 'PO-4488':{ sent:'2026-09-03', signed:'2026-09-04' }, 'PO-4490':{ sent:'2026-10-14', signed:'2026-10-15' }, 'PO-4502':{ sent:'2026-10-02', signed:'2026-10-05' }, 'PO-4503':{ sent:'2026-10-02', signed:'2026-10-05' }, 'PO-4510':{ sent:'2026-10-26', signed:null } };
+const ACKS = { 'PO-4441':{ sent:'2026-03-03', signed:'2026-03-05' }, 'PO-4460':{ sent:'2026-06-08', signed:'2026-06-09' }, 'PO-4471':{ sent:'2026-05-29', signed:'2026-05-30' }, 'PO-4495':{ sent:'2026-08-21', signed:'2026-08-24' }, 'PO-4488':{ sent:'2026-09-03', signed:'2026-09-04' }, 'PO-4490':{ sent:'2026-10-14', signed:'2026-10-15' }, 'PO-4502':{ sent:'2026-10-02', signed:'2026-10-05' }, 'PO-4503':{ sent:'2026-10-02', signed:'2026-10-05' }, 'PO-4510':{ sent:'2026-10-26', signed:null } };
 pos.forEach(p => { p.ack = ACKS[p.id] || { sent:null, signed:null }; });
 const ackDue = p => addDays(p.received, 2);
 let ackOpen = null;   // the order whose acknowledgement draft is open
@@ -1001,7 +1012,12 @@ const act = {
   ackSigned(poId) { const p = po(poId); p.ack.signed = iso(TODAY); const g = p.gate.find(x => x[0] === 'ack'); if (g) g[3] = 'done'; p.activity.push([iso(TODAY), `Signed acknowledgement received from ${cust(p.customer).contact}.`]); toast('<b>Signed acknowledgement recorded.</b>'); render(); },
   stub(msg) { toast(msg); },
   search(v) { q = v.toLowerCase(); renderMain(); const el = document.getElementById('q'); if (el) { el.focus(); el.setSelectionRange(el.value.length, el.value.length); } },
-  toggleNav(k) { const el = document.querySelector(`.nav-group[data-group="${k}"]`); navOpen[k] = el ? !el.classList.contains('open') : !navOpen[k]; renderSidebar(); },
+  toggleNav(k) {
+    const el = document.querySelector(`.nav-group[data-group="${k}"]`); const opening = el ? !el.classList.contains('open') : !navOpen[k];
+    navOpen[k] = opening; const g = NAV.find(n => n.id === k);
+    if (opening && g && g.children && !g.children.some(ch => ch.id === activeNav())) { go(g.children[0].id); return; }
+    renderSidebar();
+  },
   tool(key, val) { T[key] = val; if (key === 'groupBy') groupBy = val; if (key === 'coContext') coContext = val; if (key === 'coSort') coSort = val; renderMain(); },
   coTab(v) { go(v === 'pending' ? 'changes' : 'changes-' + v); },
   setPrimary(id) { const c = contact(id); contactsOf(c.company).forEach(x => x.primary = false); c.primary = true; toast(`<b>${esc(c.name)}</b> is now the primary contact for ${esc(company(c.company).name)}.`); render(); },
@@ -1340,13 +1356,15 @@ const intakeBadge = i => ({ queued: sb('pending', 'Queued · auto-replied'), cha
 const ordersTabs = tab => `<ul class="nav nav-tabs">
   <li class="nav-item"><a class="nav-link ${tab==='intake'?'active':''}" href="#intake">Intake <span class="badge bg-secondary bg-opacity-10 text-secondary">${intake.filter(i => i.result !== 'resolved').length}</span></a></li>
   <li class="nav-item"><a class="nav-link ${tab==='queue'?'active':''}" href="#orders-queue">Queue <span class="badge bg-warning bg-opacity-10 text-warning">${pos.filter(p=>p.lane==='queue').length}</span></a></li>
-  <li class="nav-item"><a class="nav-link ${tab==='production'?'active':''}" href="#orders-production">Production <span class="badge bg-success bg-opacity-10 text-success">${pos.filter(p=>p.lane==='production').length}</span></a></li></ul>`;
+  <li class="nav-item"><a class="nav-link ${tab==='production'?'active':''}" href="#orders-production">Production <span class="badge bg-success bg-opacity-10 text-success">${pos.filter(p=>p.lane==='production').length}</span></a></li>
+  <li class="nav-item"><a class="nav-link ${tab==='complete'?'active':''}" href="#orders-complete">Complete <span class="badge bg-secondary bg-opacity-10 text-secondary">${pos.filter(p=>p.lane==='complete').length}</span></a></li></ul>`;
 
 const ordersHeader = () => pageHeader('Orders', 'Every purchase order, from arrival to final delivery and invoice.', `<button class="btn btn-outline-secondary btn-sm" onclick="act.stub('<b>Prototype.</b> Manual entry form would open here.')"><i class="bi bi-plus-lg me-1"></i> Enter a PO by hand</button>`);
 const TAB_DESC = {
   intake: 'Everything that arrives at <span class="mono">orders@surfaceedge.com</span>. The system reads the email and attachments, matches the customer, finds gaps, and replies before anyone touches it. New customers start their account package here.',
   queue: 'Captured but not actionable yet: waiting on a need-by date or paperwork, paused by the customer, or too far out to place with the factory.',
   production: 'The production line: orders placed with a factory or warehouse and moving through milestones to delivery and invoice.',
+  complete: 'Every shipment delivered and invoiced. Kept for the record, reorders, and the customer\'s history.',
 };
 const ORDER_SORTS = [['default','Default order'],['customer','Customer A–Z'],['sqft','Sq ft, largest first'],['needby','Need-by, soonest first']];
 const orderTools = () => groupTool() + filterTool('orderFilter', [['all','All customers'],['attention','Needs attention'], ...customers.map(c => [c.id, c.name])]) + sortTool('orderSort', ORDER_SORTS);
@@ -1367,7 +1385,7 @@ function viewIntake() {
 
 function viewOrdersByShipment(tab) {
   const FAR = new Date(2100,0,1);
-  let list = shipments.filter(s => (tab === 'queue' ? !s.placedAt : !!s.placedAt)).map(s => ({ s, p: po(s.po) })).filter(({ s, p }) => (T.orderFilter === 'all' || (T.orderFilter === 'attention' ? ['crit','warn'].includes(health(s).k) : p.customer === T.orderFilter)) && matches(s.name, p.id, p.job, cust(p.customer).name, p.site, refText(s)))
+  let list = shipments.filter(s => tab === 'queue' ? !s.placedAt : tab === 'complete' ? po(s.po).lane === 'complete' : !!s.placedAt && po(s.po).lane !== 'complete').map(s => ({ s, p: po(s.po) })).filter(({ s, p }) => (T.orderFilter === 'all' || (T.orderFilter === 'attention' ? ['crit','warn'].includes(health(s).k) : p.customer === T.orderFilter)) && matches(s.name, p.id, p.job, cust(p.customer).name, p.site, refText(s)))
     .sort((a, b) => tab === 'queue' ? ((placeBy(a.s) || FAR) - (placeBy(b.s) || FAR)) : ((nextMs(a.s)?.date || FAR) - (nextMs(b.s)?.date || FAR)));
   if (T.orderSort === 'customer') list.sort((a, b) => cust(a.p.customer).name.localeCompare(cust(b.p.customer).name));
   if (T.orderSort === 'sqft') list.sort((a, b) => b.s.sqft - a.s.sqft);
@@ -1386,17 +1404,17 @@ function viewOrders(tab) {
   const head = ordersHeader() + pageNav(ordersTabs(tab), searchBox(groupBy === 'shipment' ? 'Search shipments or any PO, order, or booking #…' : 'Search orders or any PO, order, or booking #…') + orderTools()) + tabDesc(TAB_DESC[tab]);
   if (groupBy === 'shipment') return head + viewOrdersByShipment(tab);
   const FAR = new Date(2100,0,1);
-  const list = pos.filter(p => (tab === 'queue' ? p.lane === 'queue' : p.lane === 'production') && (T.orderFilter === 'all' || (T.orderFilter === 'attention' ? ['crit','warn'].includes(poHealth(p)) : p.customer === T.orderFilter)) && matches(p.id, p.job, cust(p.customer).name, p.site, shipsOf(p.id).map(refText).join(' ')));
+  const list = pos.filter(p => p.lane === tab && (T.orderFilter === 'all' || (T.orderFilter === 'attention' ? ['crit','warn'].includes(poHealth(p)) : p.customer === T.orderFilter)) && matches(p.id, p.job, cust(p.customer).name, p.site, shipsOf(p.id).map(refText).join(' ')));
   if (T.orderSort === 'customer') list.sort((a, b) => cust(a.customer).name.localeCompare(cust(b.customer).name));
   if (T.orderSort === 'sqft') list.sort((a, b) => b.sqft - a.sqft);
   if (T.orderSort === 'needby') { const first = p => { const ds = shipsOf(p.id).filter(s => s.needBy).map(s => d(s.needBy)); return ds.length ? Math.min(...ds) : FAR; }; list.sort((a, b) => first(a) - first(b)); }
   return head +
-  `<div class="data-table-wrapper"><div class="table-responsive"><table class="table table-hover"><thead><tr><th>PO</th><th>Customer · Job</th><th class="num">Sq ft</th><th>Shipments</th><th>${tab==='queue'?'Waiting on':'Status'}</th><th>${tab==='queue'?'Place by':'Next milestone'}</th></tr></thead><tbody>
+  `<div class="data-table-wrapper"><div class="table-responsive"><table class="table table-hover"><thead><tr><th>PO</th><th>Customer · Job</th><th class="num">Sq ft</th><th>Shipments</th><th>${tab==='queue'?'Waiting on':'Status'}</th><th>${tab==='queue'?'Place by':tab==='complete'?'Completed':'Next milestone'}</th></tr></thead><tbody>
     ${list.map(p => { const sh = shipsOf(p.id); const h = poHealth(p);
-      const nextCol = tab === 'queue'
+      const nextCol = tab === 'complete' ? `<span class="mono">${fmtLong(completedOn(p))}</span>` : tab === 'queue'
         ? (() => { const dated = sh.filter(s => s.needBy && !s.placedAt).map(placeBy).sort((a,b)=>a-b); return dated.length ? `<span class="mono">${fmt(dated[0])}</span> <span class="item-sub">${rel(dated[0])}</span>` : '<span class="text-body-secondary">unknown</span>'; })()
         : (() => { const live = sh.filter(s => s.placedAt && !isDelivered(s)).map(s => ({s, n: nextMs(s)})).sort((a,b)=>a.n.date-b.n.date)[0]; return live ? `${esc(live.n.name)} <span class="mono">${fmt(live.n.date)}</span><div class="item-sub">${esc(live.s.name)}</div>` : '<span class="text-body-secondary">—</span>'; })();
-      const statusCol = tab === 'queue' ? queueReasons(p).map(r => `<div style="font-size:13px">${esc(r)}</div>`).join('') : `${pill({k:h, t:PO_LABEL[h]})}<div class="item-sub mt-1">${sh.filter(isDelivered).length} of ${sh.length} delivered</div>`;
+      const statusCol = tab === 'complete' ? `${sb('active', 'Complete')}<div class="item-sub mt-1">${sh.length} of ${sh.length} delivered and invoiced</div>` : tab === 'queue' ? queueReasons(p).map(r => `<div style="font-size:13px">${esc(r)}</div>`).join('') : `${pill({k:h, t:PO_LABEL[h]})}<div class="item-sub mt-1">${sh.filter(isDelivered).length} of ${sh.length} delivered</div>`;
       return `<tr class="link" onclick="go('po-${p.id.slice(3)}')"><td class="mono">${p.id}</td><td class="item-name"><a href="#po-${p.id.slice(3)}">${esc(cust(p.customer).name)}</a><div class="item-sub">${esc(p.job)} · ${esc(p.site)}</div></td><td class="num">${p.sqft.toLocaleString()}</td><td>${sh.map(s => `<div style="font-size:13px">${esc(s.name)} ${needShort(s) ? `<span class="mono text-body-secondary">${needShort(s)}</span>` : sb('pending', 'no date')}</div>`).join('')}</td><td>${statusCol}</td><td>${nextCol}</td></tr>`; }).join('')}
     ${list.length ? '' : '<tr><td colspan="6" class="empty">No orders match.</td></tr>'}
   </tbody></table></div>${tableFooter(list.length, 'orders')}</div>`;
@@ -1447,7 +1465,8 @@ function viewPO(id, tab = 'shipments') {
   const c = cust(p.customer); const sh = shipsOf(id); const cos = changes.filter(x => x.po === id); const ths = threadsOnPO(id);
   const reasons = queueReasons(p); const h = poHealth(p); const n = p.id.slice(3);
   const waiting = sh.filter(s => !s.placedAt); const notPlaced = waiting.length ? ` ${waiting.length} of ${sh.length} shipments not placed yet: ${waiting.map(s => `${esc(s.name)} (${shipWaitingOn(s)})`).join(' · ')}.` : '';
-  const banner = p.lane === 'queue' ? `<div class="status-banner pending"><i class="bi bi-hourglass-split"></i><span>This order is <strong>in queue</strong>. Waiting on: ${reasons.length ? reasons.join(' · ') : 'placement'}.</span></div>`
+  const banner = p.lane === 'complete' ? `<div class="status-banner active"><i class="bi bi-check-circle-fill"></i><span>This order is <strong>complete</strong>. All ${sh.length} shipments delivered and invoiced; the last delivered ${fmtLong(completedOn(p))}.</span></div>`
+    : p.lane === 'queue' ? `<div class="status-banner pending"><i class="bi bi-hourglass-split"></i><span>This order is <strong>in queue</strong>. Waiting on: ${reasons.length ? reasons.join(' · ') : 'placement'}.</span></div>`
     : h === 'crit' ? `<div class="status-banner danger"><i class="bi bi-exclamation-triangle-fill"></i><span>This order is <strong>at risk</strong>. At least one shipment will miss its need-by date on current lead times.${notPlaced}</span></div>`
     : waiting.length ? `<div class="status-banner pending"><i class="bi bi-hourglass-split"></i><span>This order is <strong>in production</strong>.${notPlaced}</span></div>`
     : `<div class="status-banner active"><i class="bi bi-check-circle-fill"></i><span>This order is <strong>in production</strong> and on track. ${sh.filter(isDelivered).length} of ${sh.length} shipments delivered.</span></div>`;
@@ -1460,7 +1479,7 @@ function viewPO(id, tab = 'shipments') {
     : `<div class="stack" style="gap:10px">${sh.map(s => shipCard(s, {office:true})).join('')}</div>`;
   return pageHeader(esc(p.job), `${esc(c.name)}${p.jobNo ? ` · job <span class="mono">${esc(p.jobNo)}</span>` : ''}${p.custPO ? ` · PO <span class="mono">${esc(p.custPO)}</span>` : ''} · ${esc(p.site)} · ${sqft(p.sqft)} · ${esc(p.product)}`,
     `${pill({k:h, t:PO_LABEL[h]})}<button class="btn btn-outline-secondary btn-sm" onclick="act.remind('${p.id}')"><i class="bi bi-bell me-1"></i> Remind customer</button><a class="btn btn-outline-secondary btn-sm" href="#portal-po-${n}"><i class="bi bi-eye me-1"></i> View as customer</a><div class="dropdown"><button class="btn btn-outline-secondary btn-sm dropdown-toggle" data-bs-toggle="dropdown"><i class="bi bi-three-dots"></i></button><ul class="dropdown-menu dropdown-menu-end"><li><a class="dropdown-item" href="#po-${n}" onclick="act.stub('<b>Prototype.</b> Add shipment form would open here.')"><i class="bi bi-plus-lg me-2"></i>Add shipment</a></li><li><a class="dropdown-item" href="#po-${n}" onclick="act.stub('<b>Prototype.</b> Original email would open here.')"><i class="bi bi-envelope me-2"></i>View original email</a></li><li><hr class="dropdown-divider"></li><li><a class="dropdown-item text-danger" href="#po-${n}" onclick="act.stub('<b>Prototype.</b> Cancellation would need a reason and a customer notice.')"><i class="bi bi-x-circle me-2"></i>Cancel order</a></li></ul></div>`,
-    { back: p.lane === 'queue' ? 'orders-queue' : 'orders-production', id: p.id }) + banner + pageNav(tabs, tools) +
+    { back: 'orders-' + p.lane, id: p.id }) + banner + pageNav(tabs, tools) +
   `<div class="show-layout"><div class="show-main">${main}</div><div class="show-sidebar">${poSidebar(p, c)}</div></div>`;
 }
 
@@ -1534,7 +1553,7 @@ function viewCustomer(id) {
   const cp = pos.filter(p => p.customer === id); const cos = companyChanges(id);
   return pageHeader(esc(c.name), `Customer · ${esc(c.hq)} · rep ${esc(c.rep)}`, `${c.onboarded ? sb('active', 'Onboarded') : sb('pending', 'Onboarding')}<a class="btn btn-outline-secondary btn-sm" href="#portal" onclick="act.portalCustomer('${c.id}')"><i class="bi bi-eye me-1"></i> View their portal</a>`, { back: 'customers' }) +
   `<div class="show-layout"><div class="show-main">
-    <div class="detail-card"><div class="detail-card-header"><h3>Orders</h3><span class="card-note">${cp.length}</span></div><ul class="action-list">${cp.map(p => { const h = poHealth(p); return actionItem(h, `<a href="#po-${p.id.slice(3)}" class="text-decoration-none">${esc(p.job)}</a> <span class="mono text-body-secondary fw-normal">${p.id}</span>`, `${sqft(p.sqft)} · ${shipsOf(p.id).length} shipments · ${p.lane === 'queue' ? queueReasons(p).join(' · ') : 'in production'}`, pill({k:h, t:PO_LABEL[h]})); }).join('')}</ul></div>
+    <div class="detail-card"><div class="detail-card-header"><h3>Orders</h3><span class="card-note">${cp.length}</span></div><ul class="action-list">${cp.map(p => { const h = poHealth(p); return actionItem(h, `<a href="#po-${p.id.slice(3)}" class="text-decoration-none">${esc(p.job)}</a> <span class="mono text-body-secondary fw-normal">${p.id}</span>`, `${sqft(p.sqft)} · ${shipsOf(p.id).length} shipments · ${p.lane === 'queue' ? queueReasons(p).join(' · ') : (p.lane === 'complete' ? 'complete' : 'in production')}`, pill({k:h, t:PO_LABEL[h]})); }).join('')}</ul></div>
     <div class="detail-card"><div class="detail-card-header"><h3>Contacts</h3><a class="card-action" href="#contacts" onclick="act.stub('<b>Prototype.</b> New contact form would open here.')"><i class="bi bi-plus-lg me-1"></i>Add contact</a></div><ul class="action-list">${contactsOf(id).map(ct => contactRow(ct)).join('')}</ul></div>
     <div class="detail-card"><div class="detail-card-header"><h3>Change requests</h3><a class="card-action" href="#changes">All change requests</a></div><ul class="action-list">${cos.length ? cos.map(x => coRow(x)).join('') : '<li class="empty">None.</li>'}</ul></div>
   </div><div class="show-sidebar">
@@ -1712,7 +1731,7 @@ const PORTAL_GATE = {
 };
 function viewPortal() {
   const c = cust(portalCustomer); const cp = pos.filter(p => p.customer === c.id);
-  const active = cp.filter(p => p.lane === 'production'), queued = cp.filter(p => p.lane === 'queue');
+  const active = cp.filter(p => p.lane === 'production'), queued = cp.filter(p => p.lane === 'queue'), completed = cp.filter(p => p.lane === 'complete');
   const needs = [];
   cp.forEach(p => { shipsOf(p.id).filter(s => !s.needBy && !changes.some(x => x.ship === s.id && x.status === 'pending')).forEach(s => needs.push({ p, s, kind:'date' })); p.gate.filter(g => g[3]==='pending' && g[2]==='Customer').forEach(g => needs.push({ p, g, kind:'gate' })); shipsOf(p.id).filter(s => /missing/i.test(s.dest)).slice(0,1).forEach(s => needs.push({ p, s, kind:'address' })); });
   const pendingCOs = changes.filter(x => x.status === 'pending' && (x.po ? po(x.po).customer : x.target) === c.id);
@@ -1727,6 +1746,7 @@ function viewPortal() {
       : '<li class="empty"><div class="status-banner active mb-0"><i class="bi bi-check-circle-fill"></i> Nothing outstanding. We have what we need to keep your orders moving.</div></li>'}</ul></div>
     <div class="detail-card"><div class="detail-card-header"><h3>In production</h3></div><ul class="action-list">${active.length ? active.map(portalPORow).join('') : '<li class="empty">No orders in production.</li>'}</ul></div>
     <div class="detail-card"><div class="detail-card-header"><h3>In queue</h3><span class="card-note">captured, waiting on dates or paperwork</span></div><ul class="action-list">${queued.length ? queued.map(portalPORow).join('') : '<li class="empty">Nothing in queue.</li>'}</ul></div>
+    ${completed.length ? `<div class="detail-card"><div class="detail-card-header"><h3>Completed</h3><span class="card-note">delivered and invoiced</span></div><ul class="action-list">${completed.map(portalPORow).join('')}</ul></div>` : ''}
     <p class="item-sub">Something not right? Change the date or address on the order itself. We will confirm, and you will get an email either way. You do not need to reply to this page by email.</p>
     </div>`);
 }
@@ -1781,6 +1801,7 @@ const NAV = [
       { id:'intake', label:'Intake', alert: () => red(needsHuman()), hint:'new POs, new customers' },
       { id:'orders-queue', label:'Queue', alert: () => firstOf(red(missedPlaceBy()), yellow(pos.filter(p => p.lane === 'queue').length)), hint:'waiting or paused' },
       { id:'orders-production', label:'Production', alert: () => red(lateInProduction()), hint:'moving through milestones' },
+      { id:'orders-complete', label:'Complete', hint:'delivered and invoiced' },
     ] },
   { id:'chats', label:'Chats', icon:'chat-left-text', link:'chats-inbox', alert: () => yellow(threadsFor('open').length), children: [
       { id:'chats-inbox', label:'My inbox', alert: () => yellow(threadsFor('inbox').filter(t => t.status === 'open').length), hint:'assigned to you, not closed' },
@@ -1796,8 +1817,8 @@ const NAV = [
 const BADGE = { danger:'bg-danger', warn:'bg-warning text-dark' };
 const navBadge = al => al ? `<span class="badge ${BADGE[al.sev]}" title="${al.n} ${al.why}">${al.n}</span>` : '';
 function activeNav() {
-  const pm = route.match(/^po-(\d+)/); if (pm) { const p = po('PO-' + pm[1]); return p && p.lane === 'queue' ? 'orders-queue' : 'orders-production'; }
-  if (route.startsWith('ship-')) { const s = ship(route.slice(5)); const p = s && po(s.po); return p && p.lane === 'queue' ? 'orders-queue' : 'orders-production'; }
+  const pm = route.match(/^po-(\d+)/); if (pm) { const p = po('PO-' + pm[1]); return 'orders-' + (p ? p.lane : 'production'); }
+  if (route.startsWith('ship-')) { const s = ship(route.slice(5)); const p = s && po(s.po); return 'orders-' + (p ? p.lane : 'production'); }
   if (route.startsWith('todo')) return 'todo';
   if (route.startsWith('feed')) return 'feed';
   if (route.startsWith('customer-')) return 'customers';
@@ -1832,7 +1853,7 @@ function crumbs() {
   else if (/^po-\d+/.test(route) || route.startsWith('ship-')) {
     const sEdit = route.startsWith('ship-') ? ship(route.slice(5)) : null; const m = route.match(/^po-(\d+)(?:-(\w+))?$/);
     const p = sEdit ? po(sEdit.po) : po('PO-' + (m ? m[1] : ''));
-    items.push(['Orders', 'orders-production'], [p && p.lane === 'queue' ? 'Queue' : 'Production', p && p.lane === 'queue' ? 'orders-queue' : 'orders-production']);
+    items.push(['Orders', 'orders-production'], [LANE_LABEL[p ? p.lane : 'production'], 'orders-' + (p ? p.lane : 'production')]);
     if (sEdit) items.push([p.job, 'po-' + p.id.slice(3)], [`Edit ${sEdit.name}`, null]);
     else if (m && m[2]) items.push([p ? p.job : route, 'po-' + m[1]], [{ changes:'Change requests', chats:'Chats', activity:'Activity' }[m[2]] || m[2], null]);
     else items.push([p ? p.job : route, null]);
@@ -1937,6 +1958,7 @@ function renderMain() {
   else if (route === 'intake') body = viewIntake();
   else if (route === 'orders-queue') body = viewOrders('queue');
   else if (route === 'orders-production') body = viewOrders('production');
+  else if (route === 'orders-complete') body = viewOrders('complete');
   else if (/^po-\d+/.test(route)) { const m = route.match(/^po-(\d+)(?:-(\w+))?$/); body = m ? viewPO('PO-' + m[1], m[2] || 'shipments') : viewToday(); }
   else if (route.startsWith('ship-')) body = viewShipEdit(route.slice(5));
   else if (route === 'changes' || route.startsWith('changes-')) { coTab = route === 'changes' ? 'pending' : route.slice(8); if (!CO_STATUS[coTab]) coTab = 'pending'; body = viewChanges(); }
