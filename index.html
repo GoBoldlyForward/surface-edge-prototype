@@ -464,7 +464,7 @@ const rel = dt => { const n = diffDays(dt, TODAY); if (n === 0) return 'today'; 
    Ocean transit by port: median days from departure to US port in Surface Edge's order history, 2022 to 2026.
    Everything else is still Ryan's napkin numbers (placeholders). */
 const C = {
-  production: 45, loadout: 10, clearance: 5, drayage: 3, bookingLead: 21, pick: 2, ground: 4,
+  production: 45, loadout: 21, loadoutUrgent: 10, clearance: 5, drayage: 3, bookingLead: 21, bookingBack: 5, pick: 2, ground: 4,
   ocean: { 'Los Angeles': 14, 'Long Beach': 14, 'Houston': 30, 'Savannah': 33, 'Charleston': 32, 'Miami': 32, 'Tampa': 32, 'Portland': 21, 'Tacoma': 18 },
   reminderDays: 7, stopUsDays: 10, standingEmailDays: 14,
 };
@@ -485,7 +485,7 @@ const cust = id => customers.find(c => c.id === id);
 const vendors = [
   { id:'daizhin', name:'Daizhin Flooring Co.', roles:['Factory'], hq:'Busan, Korea', notes:'Primary mill. 45-day production; holiday shutdown late Jan. Will produce everything you send, so send only what should be made.', constraint:'production' },
   { id:'vina', name:'Vina Floor Industries', roles:['Factory'], hq:'Ho Chi Minh City, Vietnam', notes:'Secondary mill for Summit Hickory overflow. No open shipments.', constraint:'production' },
-  { id:'pacific-line', name:'Pacific Line Logistics', roles:['Freight forwarder','Customs broker'], hq:'Long Beach, CA', notes:'Books ocean freight and clears customs. ~3 weeks from booking request to confirmed booking.', constraint:'bookingLead' },
+  { id:'pacific-line', name:'Pacific Line Logistics', roles:['Freight forwarder','Customs broker'], hq:'Long Beach, CA', notes:'Books ocean freight and clears customs. A booking comes back 1 to 5 days after the request; the container sails 2 to 4 weeks after it.', constraint:'bookingLead' },
   { id:'gulf-dray', name:'Gulf Coast Drayage', roles:['Drayage carrier'], hq:'Houston, TX', notes:'Port of Houston to Texas job sites.', constraint:'drayage' },
   { id:'coastal-dray', name:'Coastal Drayage Services', roles:['Drayage carrier'], hq:'Savannah, GA', notes:'Savannah and Charleston ports to Georgia and the Carolinas.', constraint:'drayage' },
   { id:'west-dray', name:'Westline Intermodal', roles:['Drayage carrier'], hq:'Long Beach, CA', notes:'LA and Long Beach to the Mountain West.', constraint:'drayage' },
@@ -905,8 +905,16 @@ const overdueMs = s => milestones(s).find(m => m.overdue) || null;
 const MS_SHORT = { 'Production complete':'Production', 'Departed origin port':'Departure', 'Arrived US port':'Port arrival', 'Cleared customs':'Customs', 'Delivered':'Delivery', 'Picked':'Pick', 'Shipped':'Pickup' };
 /* Who to ask when a milestone is overdue: the factory or warehouse, then the forwarder, then the last-leg carrier. */
 const msVendor = (s, i) => vendor(s.type === 'container' ? [s.originCo, s.originCo, s.forwarder, s.forwarder, s.forwarder, s.carrier][i] : [s.originCo, s.originCo, s.carrier, s.carrier][i]);
-const bookingBy = s => addDays(milestones(s)[1].date, -C.bookingLead);
-const bookingLate = s => s.type === 'container' && s.placedAt && s.stage < 2 && !s.booking && bookingBy(s) < TODAY;
+/* Purchasing requests a booking two to four weeks before the sailing it wants, and the booking comes back one to five days later (Oct 28).
+   So the request is timed from the planned sailing, and a request with nothing back after C.bookingBack days comes up to chase. */
+const bookingBy = s => addDays(milestones(s)[2].date, -C.bookingLead);
+const bookingLate = s => s.type === 'container' && s.placedAt && s.stage < 2 && !s.booking && !s.bookingRequested && bookingBy(s) < TODAY;
+const bookingStuck = s => s.type === 'container' && !!s.bookingRequested && !s.booking && !s.actual[2] && diffDays(TODAY, s.bookingRequested) > C.bookingBack;
+Object.assign(ship('S6'), { bookingRequested: '2026-10-19' });   // Lakeshore Container 2 finished Oct 10; the request went out Oct 19 and nothing has come back
+/* Purchasing books urgent orders while they are still in production, and other jobs once production is done (Oct 28). An ASAP container plans
+   C.loadoutUrgent days from production finished to sailing, so its booking request falls during production. Everything else plans C.loadout. */
+const legsBookedAfterProduction = durations;
+durations = s => { const dur = legsBookedAfterProduction(s); if (s.type === 'container' && s.asap) dur[2] = C.loadoutUrgent; return dur; };
 
 /* ---------- derived ---------- */
 function queueReasons(p) {
@@ -947,7 +955,8 @@ function nextActions() {
   threads.filter(t => t.status === 'open' && t.draft && !t.draftDismissed).forEach(t => a.push({ id:'draft-'+t.id, k:'info', t:`Reply to ${t.contact ? contact(t.contact).name : 'sender'}: ${t.subject}`, d:`Drafted from ${[t.po ? po(t.po).job : null, t.co, ...(t.cos || [])].filter(Boolean).join(t.cos ? ', ' : ' and ') || 'the thread'}: "${t.draft.split('\n').filter(l => l.trim() && !/^(hi|dear)\b/i.test(l))[0].slice(0, 110)}…"`, link:'chat-'+t.id, btn:'Approve: send draft', fn:`act.sendDraft('${t.id}')` }));
   shipments.filter(s => s.placedAt && s.stage === 1 && s.type === 'container').forEach(s => a.push({ id:'stop-'+s.id, k:'info', t:`"Stop us or it ships": ${s.name} of ${po(s.po).job} departs ${fmt(milestones(s)[2].date)}`, d:`Standing notice ${C.stopUsDays} days before departure. No reply means it ships.`, link:'po-'+s.po.slice(3), btn:'Approve: send notice', toast:'Departure notice sent. Customer has until departure to change.' }));
   shipments.filter(s => s.placedAt && !isDelivered(s) && overdueMs(s)).forEach(s => { const m = overdueMs(s), v = msVendor(s, m.i); a.push({ id:'overdue-'+s.id, k:'warn', t:`Check on ${s.name} of ${po(s.po).job}: ${(MS_SHORT[m.name] || m.name).toLowerCase()} not recorded`, d:`Estimated ${fmt(m.due)}; nothing recorded ${m.overdue} day${m.overdue > 1 ? 's' : ''} later. Later dates now count from today.`, link:'po-'+s.po.slice(3), btn:'Approve: ask for status', toast:`Status request sent to ${v ? esc(v.name) : 'the vendor'}.` }); });
-  shipments.filter(bookingLate).forEach(s => a.push({ id:'book-'+s.id, k:'warn', t:`Request a booking for ${s.name} of ${po(s.po).job}`, d:`Should have gone out by ${fmt(bookingBy(s))} for a container ready ${fmt(milestones(s)[1].date)}. Booking takes about ${C.bookingLead} days.`, link:'po-'+s.po.slice(3), btn:'Approve: request booking', toast:`Booking request sent to ${s.forwarder ? esc(vendor(s.forwarder).name) : 'the forwarder'}.` }));
+  shipments.filter(bookingLate).forEach(s => a.push({ id:'book-'+s.id, k:'warn', t:`Request a booking for ${s.name} of ${po(s.po).job}`, d:`Should have gone out by ${fmt(bookingBy(s))}, ${C.bookingLead} days before it sails ${fmt(milestones(s)[2].date)}. Bookings come back within about ${C.bookingBack} days.`, link:'po-'+s.po.slice(3), btn:'Approve: request booking', fn:`act.requestBooking('${s.id}')` }));
+  shipments.filter(bookingStuck).forEach(s => a.push({ id:'book-chase-'+s.id, k:'warn', t:`Chase the booking for ${s.name} of ${po(s.po).job}`, d:`Requested ${fmt(s.bookingRequested)}, nothing back after ${diffDays(TODAY, s.bookingRequested)} days. Planned to sail ${fmt(milestones(s)[2].date)}.`, link:'po-'+s.po.slice(3), btn:'Approve: ask the forwarder', toast:`Asked ${s.forwarder ? esc(vendor(s.forwarder).name) : 'the forwarder'} where the booking for ${s.name} stands.` }));
   return a.filter(x => !done.has(x.id));
 }
 
@@ -1030,6 +1039,7 @@ const act = {
   cancelRename() { renaming = null; render(); },
   remind(poId) { toast(`<b>Reminder sent</b> to ${cust(po(poId).customer).contact} with a portal link.`); },
   hold(shipId) { const s = ship(shipId); s.hold = !s.hold; po(s.po).activity.push([iso(TODAY), `${s.name} ${s.hold ? 'held in the queue' : 'released from hold'} by Ryan.`]); toast(s.hold ? `<b>${esc(s.name)} held.</b> It stays in the queue and drops out of the place-by actions until you release it.` : `<b>${esc(s.name)} released.</b> It will be proposed for placement when it is due.`); render(); },
+  requestBooking(sid) { const s = ship(sid); s.bookingRequested = iso(TODAY); po(s.po).activity.push([iso(TODAY), `Booking requested for ${s.name}, to sail ${fmt(milestones(s)[2].date)}.`]); toast(`<b>Booking requested</b> for ${esc(s.name)}. If nothing comes back in ${C.bookingBack} days, it comes up to chase.`); render(); },
   toggleLead(id) { const c = cust(id); c.showLeadTimes = !c.showLeadTimes; toast(`<b>${c.name}:</b> lead times ${c.showLeadTimes ? 'visible' : 'hidden'} in the portal.`); render(); },
   setC(key, val, port) { const n = Number(val); if (isNaN(n)) return; if (port) C.ocean[port] = n; else C[key] = n; render(); },
   portalCustomer(id) { portalCustomer = id; render(); },
@@ -1252,7 +1262,7 @@ function shipCard(s, opts = {}) {
         ${s.placedAt ? `<div class="detail-field"><div class="detail-label">Placed</div><div class="detail-value mono">${fmtLong(s.placedAt)}</div></div>` : `<div class="detail-field"><div class="detail-label">Place by</div><div class="detail-value mono">${pb ? fmtLong(pb) + ` <span class="text-body-secondary">(${rel(pb)})</span>` : '—'}</div></div>`}
         ${shipByDate(s) && !s.actual[2] ? `<div class="detail-field"><div class="detail-label">Ship by</div><div class="detail-value mono">${fmtLong(shipByDate(s))}</div><div class="item-sub mt-1">${holdDays(s) ? `Placed early; the mill times production to this date` : 'Goes on the factory PO; the mill produces to it'}</div></div>` : ''}
         <div class="detail-field"><div class="detail-label">Est. delivery</div><div class="detail-value mono">${s.placedAt || s.needBy ? fmtLong(eta(s)) : '—'}</div></div>
-        ${s.type === 'container' && s.placedAt && s.stage < 2 ? `<div class="detail-field full-width"><div class="detail-label">Request booking by</div><div class="detail-value mono ${bookingLate(s) ? 'text-danger' : ''}">${fmtLong(bookingBy(s))}${bookingLate(s) ? ` <span class="fw-normal">(${rel(bookingBy(s))}, no booking recorded)</span>` : ''}</div></div>` : ''}
+        ${s.type === 'container' && s.placedAt && s.stage < 2 ? `<div class="detail-field full-width"><div class="detail-label">${s.bookingRequested ? 'Booking requested' : 'Request booking by'}</div><div class="detail-value mono ${bookingLate(s) || bookingStuck(s) ? 'text-danger' : ''}">${s.bookingRequested ? `${fmtLong(s.bookingRequested)} <span class="fw-normal">(${s.booking ? 'confirmed' : bookingStuck(s) ? `nothing back after ${diffDays(TODAY, s.bookingRequested)} days` : 'waiting on the forwarder'})</span>` : `${fmtLong(bookingBy(s))}${bookingLate(s) ? ` <span class="fw-normal">(${rel(bookingBy(s))}, no request recorded)</span>` : ''}${opts.office && !s.booking ? ` <button class="btn btn-link btn-sm p-0 ms-1 align-baseline" onclick="act.requestBooking('${s.id}')">Mark requested</button>` : ''}`}</div><div class="item-sub mt-1">${s.bookingRequested ? 'Planned to sail' : `${C.bookingLead} days before the planned sailing,`} ${fmt(milestones(s)[2].date)}</div></div>` : ''}
       </div>
       ${opts.office && !s.placedAt ? `<div class="d-flex gap-2 flex-wrap mt-3">${s.needBy && !s.hold ? `<button class="btn btn-sm btn-primary" onclick="act.completeAction('place-${s.id}','Factory PO drafted for ${esc(s.name)}.')"><i class="bi bi-send me-1"></i>Place with ${esc(s.origin.split(',')[0])}</button>` : ''}<button class="btn btn-sm btn-outline-secondary" onclick="act.hold('${s.id}')" title="${s.hold ? 'Let it be placed when it is due' : 'Keep it in the queue until you release it'}"><i class="bi bi-${s.hold ? 'play' : 'pause'}-circle me-1"></i>${s.hold ? 'Release hold' : 'Hold in queue'}</button></div>` : ''}
     </div>
@@ -2043,8 +2053,8 @@ function viewChats(tab, selectedId) {
   ${sel ? threadView(sel) : '<div class="detail-card"><div class="empty">Select a thread.</div></div>'}</div>`;
 }
 
-const CONSTRAINT_LABEL = { production:'Factory production', bookingLead:'Booking lead', drayage:'Drayage to destination', ground:'Ground to job site', pick:'Pick' };
-const ROLE_DESC = { Factory:'Mills that produce the flooring. Production lead time starts the milestone chain, and a mill makes everything you send it.', 'Freight forwarder':'Book the ocean freight. About three weeks from booking request to a confirmed booking.', 'Customs broker':'Clear containers at the US port.', 'Drayage carrier':'Move containers from the port to the job site or warehouse.', 'LTL carrier':'Third-party trucking for pallets out of Wanke warehouses. The small shipments that cause the most pain.', Warehouse:'Wanke-owned or third-party warehouses that stock product and ship balances.' };
+const CONSTRAINT_LABEL = { production:'Factory production', bookingLead:'Booking request before sailing', drayage:'Drayage to destination', ground:'Ground to job site', pick:'Pick' };
+const ROLE_DESC = { Factory:'Mills that produce the flooring. Production lead time starts the milestone chain, and a mill makes everything you send it.', 'Freight forwarder':'Book the ocean freight. A booking comes back one to five days after the request, and the container sails two to four weeks after it.', 'Customs broker':'Clear containers at the US port.', 'Drayage carrier':'Move containers from the port to the job site or warehouse.', 'LTL carrier':'Third-party trucking for pallets out of Wanke warehouses. The small shipments that cause the most pain.', Warehouse:'Wanke-owned or third-party warehouses that stock product and ship balances.' };
 function viewVendors(roleSlug) {
   const role = roleSlug ? ROLE_TABS.find(r => slug(r[0]) === roleSlug)?.[0] : null;
   const rows = vendors.filter(v => (!role || v.roles.includes(role)) && (T.vendorFilter === 'all' || (T.vendorFilter === 'active' ? vendorShipments(v.id).some(s => !isDelivered(s)) : companyChanges(v.id).some(c => c.status === 'pending'))) && matches(v.name, v.hq, v.roles.join(' ')));
@@ -2076,7 +2086,7 @@ function viewSettings() {
   const grid = inner => `<div class="row row-cols-2 row-cols-md-3 row-cols-lg-5 g-3">${inner}</div>`;
   return pageHeader('Constraints', 'Lead times that set every planned date in the system.') +
   `<div class="stack">
-  ${detailCard('Ocean shipment legs (days)', '', grid(f('Factory production','production') + f('Booking lead (request before ready)','bookingLead') + f('Load-out to departure','loadout') + f('Port clearance','clearance') + f('Drayage to destination','drayage')))}
+  ${detailCard('Ocean shipment legs (days)', '', grid(f('Factory production','production') + f('Production finished to sailing','loadout') + f('Production finished to sailing, ASAP orders','loadoutUrgent') + f('Booking request before sailing','bookingLead') + f('Booking comes back within','bookingBack') + f('Port clearance','clearance') + f('Drayage to destination','drayage')))}
   ${detailCard('Ocean transit from Korea by US port (days)', 'median of the order history', grid(Object.keys(C.ocean).map(p => f(p, 'ocean', p, OCEAN_HISTORY[p])).join('')))}
   ${detailCard('Domestic from Wanke warehouse (days)', '', grid(f('Pick','pick') + f('Ground to job site','ground')))}
   ${detailCard('Last leg by distance (days)', 'local uses drayage above', grid(f('Regional, 150 to 500 miles','legRegional') + f('Long haul, over 500 miles','legLong') + f('Warehouse release before the truck','release')))}
