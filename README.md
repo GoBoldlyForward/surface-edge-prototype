@@ -71,7 +71,16 @@ A single feed was considered and rejected. A time-ordered list buries urgent app
   - The note under the tabs is one line with an ellipsis and expands on click.
   - Group by, Filter, and Sort are icon buttons that open a menu with a header. A label appears next to the icon only when a non-default option is chosen.
   - Tables fill the viewport so pagination sits near the bottom.
-- **Record pages** (an order, for example) put Shipments, Change requests, Chats, and Activity on a tab row. The checklist, source, attachments, items, and acknowledgement stay in a persistent side column. Shipments collapse and have their own edit page.
+- **Record pages** (order, customer, vendor, contact) share one layout. The header has a back link and actions. A status banner says what matters right now. A tab row has the content tabs on the left and that tab's tools on the right. The active tab fills the main column, and reference details stay in a persistent side column. The first tab lives at the bare record link, and each other tab gets its own link.
+
+  | Record | Tabs | Side column |
+  | --- | --- | --- |
+  | Order | Shipments, Change requests, Chats, Activity | Checklist, items, source, acknowledgement, attachments |
+  | Customer | Orders, Contacts, Change requests, Chats, Activity | Account, notes |
+  | Vendor | Shipments, Forecast (factories), Contacts, Change requests, Chats, Activity | Details, notes |
+  | Contact | Orders (customer contacts), Change requests, Chats, Activity | Details, others at the company |
+
+  Activity on customer, vendor and contact pages is the Feed filtered to that record, so history reads the same everywhere. Shipments on an order collapse and have their own edit page.
 - **Theme** has a top-bar toggle for Auto, Light, and Dark.
 
 ## Waiting on

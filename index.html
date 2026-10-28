@@ -1548,24 +1548,132 @@ const contactRow = (ct, opts = {}) => actionItem(ct.status === 'left' ? 'crit' :
   ct.status === 'active' && !ct.primary ? `<button class="btn btn-sm btn-outline-secondary" onclick="act.setPrimary('${ct.id}')">Make primary</button>` : '');
 const companyChanges = id => changes.filter(c => c.target === id || (c.po && po(c.po).customer === id) || (c.ship && vendorRoleOn(id, ship(c.ship))));
 
-function viewCustomer(id) {
-  const c = cust(id); if (!c) return '';
-  const cp = pos.filter(p => p.customer === id); const cos = companyChanges(id);
-  return pageHeader(esc(c.name), `Customer · ${esc(c.hq)} · rep ${esc(c.rep)}`, `${c.onboarded ? sb('active', 'Onboarded') : sb('pending', 'Onboarding')}<a class="btn btn-outline-secondary btn-sm" href="#portal" onclick="act.portalCustomer('${c.id}')"><i class="bi bi-eye me-1"></i> View their portal</a>`, { back: 'customers' }) +
-  `<div class="show-layout"><div class="show-main">
-    <div class="detail-card"><div class="detail-card-header"><h3>Orders</h3><span class="card-note">${cp.length}</span></div><ul class="action-list">${cp.map(p => { const h = poHealth(p); return actionItem(h, `<a href="#po-${p.id.slice(3)}" class="text-decoration-none">${esc(p.job)}</a> <span class="mono text-body-secondary fw-normal">${p.id}</span>`, `${sqft(p.sqft)} · ${shipsOf(p.id).length} shipments · ${p.lane === 'queue' ? queueReasons(p).join(' · ') : (p.lane === 'complete' ? 'complete' : 'in production')}`, pill({k:h, t:PO_LABEL[h]})); }).join('')}</ul></div>
-    <div class="detail-card"><div class="detail-card-header"><h3>Contacts</h3><a class="card-action" href="#contacts" onclick="act.stub('<b>Prototype.</b> New contact form would open here.')"><i class="bi bi-plus-lg me-1"></i>Add contact</a></div><ul class="action-list">${contactsOf(id).map(ct => contactRow(ct)).join('')}</ul></div>
-    <div class="detail-card"><div class="detail-card-header"><h3>Change requests</h3><a class="card-action" href="#changes">All change requests</a></div><ul class="action-list">${cos.length ? cos.map(x => coRow(x)).join('') : '<li class="empty">None.</li>'}</ul></div>
-  </div><div class="show-sidebar">
-    ${detailCard('Account', '', `<ul class="meta-list">
-      <li class="meta-item"><span class="meta-label">Onboarding</span><span class="meta-value">${c.onboarded ? 'Complete' : 'In progress (see first PO)'}</span></li>
-      <li class="meta-item"><span class="meta-label">Lead times in portal</span><span class="meta-value">${c.showLeadTimes ? 'Visible' : 'Hidden'} <a href="#customer-${c.id}" onclick="act.toggleLead('${c.id}')" class="fw-normal">change</a></span></li>
-      <li class="meta-item"><span class="meta-label">Standing email</span><span class="meta-value">Every ${C.standingEmailDays} days<div class="fw-normal text-body-secondary">last opened ${c.id==='fantasia' ? sb('danger', 'never') : 'Oct 19'}</div></span></li>
-      <li class="meta-item"><span class="meta-label">PO completeness</span><span class="meta-value mono">${c.completeness}%</span></li>
-      <li class="meta-item"><span class="meta-label">Changes / 90d</span><span class="meta-value mono">${c.cos90}</span></li></ul>`)}
-    ${detailCard('Notes', '', `<div style="font-size:14px;color:var(--text-2);line-height:1.6">${esc(c.notes)}</div>`)}
-  </div></div>`;
+/* ---------- Record pages: one pattern for orders, customers, vendors and contacts ----------
+   Header with back link and actions, a status banner, a tab row (content left, tools right),
+   the active tab in the main column, and a persistent side column of reference details. */
+function parseShow(prefix, lookup, tabs) {
+  const rest = route.slice(prefix.length);
+  const t = tabs.find(x => rest.endsWith('-' + x) && lookup(rest.slice(0, -x.length - 1)));
+  return t ? { id: rest.slice(0, -t.length - 1), tab: t } : { id: rest, tab: null };
 }
+const CUSTOMER_SHOW_TABS = ['orders', 'contacts', 'changes', 'chats', 'activity'];
+const VENDOR_SHOW_TABS = ['shipments', 'forecast', 'contacts', 'changes', 'chats', 'activity'];
+const CONTACT_SHOW_TABS = ['orders', 'changes', 'chats', 'activity'];
+const TAB_LABEL = { orders:'Orders', contacts:'Contacts', changes:'Change requests', chats:'Chats', activity:'Activity', shipments:'Shipments', forecast:'Forecast' };
+/* tabs: [[key, count, color]]; the first is the default and lives at the bare record route. */
+const showTabs = (base, tabs, active) => tabsUl(tabs.map(([k, n, color], i) => [i === 0 ? base : `${base}-${k}`, TAB_LABEL[k], n, color]), active === tabs[0][0] ? base : `${base}-${active}`);
+const warnIf = cond => cond ? 'warning' : 'secondary';
+function feedRowsHtml(list, empty) {
+  let lastDay = null;
+  const rows = list.map(e => { const [ic, icon] = FEED_ICON[e.type]; const head = e.date !== lastDay ? `<li class="feed-day">${dayLabel(e.date)}</li>` : ''; lastDay = e.date;
+    return head + `<li class="feed-item"><div class="timeline-icon ${ic}"><i class="bi bi-${icon}"></i></div><div class="minw0 flex-grow-1"><div class="feed-line"><b>${esc(e.who)}</b> <span class="feed-text">${esc(e.text.replace(/\s+/g, ' ').slice(0, 220))}${e.text.length > 220 ? '…' : ''}</span></div><div class="feed-meta">${e.where}${e.time ? `<span class="mono">${e.time}</span>` : ''}</div></div></li>`; }).join('');
+  return `<div class="detail-card"><ul class="feed-list">${rows || `<li class="empty">${empty}</li>`}</ul></div>`;
+}
+const orderRow = p => { const h = poHealth(p); return actionItem(p.lane === 'complete' ? 'good' : h, `<a href="#po-${p.id.slice(3)}" class="text-decoration-none">${esc(p.job)}</a> <span class="mono text-body-secondary fw-normal">${p.id}</span>`, `${sqft(p.sqft)} · ${shipsOf(p.id).length} shipments · ${p.lane === 'queue' ? queueReasons(p).join(' · ') || 'waiting to be placed' : p.lane === 'complete' ? 'complete' : 'in production'}`, p.lane === 'complete' ? sb('active', 'Complete') : `${sb({ queue:'pending', production:'info' }[p.lane], LANE_LABEL[p.lane])}${h === 'crit' || h === 'warn' ? ' ' + pill({ k:h, t:PO_LABEL[h] }) : ''}`); };
+const listCard = (items, empty) => `<div class="detail-card"><ul class="action-list">${items.length ? items.join('') : `<li class="empty">${empty}</li>`}</ul></div>`;
+const threadCard = (ths, empty) => `<div class="detail-card"><ul class="thread-list">${ths.length ? ths.map(t => threadListItem(t, false)).join('') : `<li class="empty">${empty}</li>`}</ul></div>`;
+const notesCard = text => detailCard('Notes', '', `<div style="font-size:14px;color:var(--text-2);line-height:1.6">${esc(text)}</div>`);
+const addContactBtn = () => `<button class="btn btn-sm btn-primary" onclick="act.stub('<b>Prototype.</b> New contact form would open here.')"><i class="bi bi-plus-lg me-1"></i>Add contact</button>`;
+
+function viewCustomer(id, tab) {
+  const c = cust(id); if (!c) return '';
+  tab = tab || 'orders';
+  const cp = pos.filter(p => p.customer === id); const cos = companyChanges(id); const ths = threads.filter(t => t.company === id); const cts = contactsOf(id);
+  const acts = feedEvents().filter(e => (e.p && e.p.customer === id) || e.who.includes(c.name));
+  const lanes = k => cp.filter(p => p.lane === k).length;
+  const atRisk = cp.filter(p => p.lane !== 'complete' && poHealth(p) === 'crit');
+  const firstQueued = cp.find(p => p.lane === 'queue');
+  const banner = !c.onboarded ? `<div class="status-banner pending"><i class="bi bi-hourglass-split"></i><span>This customer is <strong>onboarding</strong>. ${firstQueued ? `Waiting on: ${queueReasons(firstQueued).join(' · ')}.` : ''}</span></div>`
+    : atRisk.length ? `<div class="status-banner danger"><i class="bi bi-exclamation-triangle-fill"></i><span><strong>${atRisk.length} order${atRisk.length > 1 ? 's' : ''} at risk:</strong> ${atRisk.map(p => esc(p.job)).join(' · ')}.</span></div>`
+    : `<div class="status-banner active"><i class="bi bi-check-circle-fill"></i><span><strong>${lanes('production')} in production</strong>, ${lanes('queue')} in queue, ${lanes('complete')} complete. Nothing at risk.</span></div>`;
+  const tabs = showTabs(`customer-${id}`, [['orders', cp.length], ['contacts', cts.length], ['changes', cos.length, warnIf(cos.some(x => x.status === 'pending'))], ['chats', ths.length, warnIf(ths.some(t => t.status === 'open'))], ['activity', acts.length]], tab);
+  const tools = { orders: `<button class="btn btn-sm btn-primary" onclick="act.stub('<b>Prototype.</b> Manual order entry would open here, with ${esc(c.name)} filled in.')"><i class="bi bi-plus-lg me-1"></i>Enter an order</button>`, contacts: addContactBtn(), changes: `<a class="btn btn-sm btn-outline-secondary" href="#changes">All change requests</a>`, chats: `<a class="btn btn-sm btn-outline-secondary" href="#chats-open">All chats</a>`, activity: `<a class="btn btn-sm btn-outline-secondary" href="#feed-customers">Open the feed</a>` }[tab];
+  const main = tab === 'contacts' ? listCard(cts.map(ct => contactRow(ct)), 'No contacts yet.')
+    : tab === 'changes' ? listCard(cos.map(x => coRow(x)), 'No change requests.')
+    : tab === 'chats' ? threadCard(ths, 'No conversations with this customer.')
+    : tab === 'activity' ? feedRowsHtml(acts.slice(0, 60), 'No activity yet.')
+    : listCard(['queue', 'production', 'complete'].flatMap(l => cp.filter(p => p.lane === l)).map(orderRow), 'No orders yet.');
+  const pc = cts.find(x => x.primary);
+  return pageHeader(esc(c.name), `Customer · ${esc(c.hq)} · rep ${esc(c.rep)}`, `${c.onboarded ? sb('active', 'Onboarded') : sb('pending', 'Onboarding')}<a class="btn btn-outline-secondary btn-sm" href="#portal" onclick="act.portalCustomer('${c.id}')"><i class="bi bi-eye me-1"></i> View their portal</a><button class="btn btn-outline-secondary btn-sm" onclick="act.remind('${(firstQueued || cp[0] || {}).id || ''}')" ${firstQueued ? '' : 'disabled'}><i class="bi bi-bell me-1"></i> Send reminder</button>`, { back: 'customers' }) +
+    banner + pageNav(tabs, tools) +
+    `<div class="show-layout"><div class="show-main">${main}</div><div class="show-sidebar">
+      ${detailCard('Account', '', `<ul class="meta-list">
+        <li class="meta-item"><span class="meta-label">Primary contact</span><span class="meta-value">${pc ? `<a href="#contact-${pc.id}">${esc(pc.name)}</a><div class="fw-normal text-body-secondary mono">${esc(pc.email)}</div>` : '—'}</span></li>
+        <li class="meta-item"><span class="meta-label">Onboarding</span><span class="meta-value">${c.onboarded ? 'Complete' : 'In progress'}</span></li>
+        <li class="meta-item"><span class="meta-label">Lead times in portal</span><span class="meta-value">${c.showLeadTimes ? 'Visible' : 'Hidden'} <a href="#customer-${c.id}" onclick="act.toggleLead('${c.id}')" class="fw-normal">change</a></span></li>
+        <li class="meta-item"><span class="meta-label">Standing email</span><span class="meta-value">Every ${C.standingEmailDays} days<div class="fw-normal text-body-secondary">last opened ${c.id === 'fantasia' ? sb('danger', 'never') : 'Oct 19'}</div></span></li>
+        <li class="meta-item"><span class="meta-label">PO completeness</span><span class="meta-value mono">${c.completeness}%</span></li>
+        <li class="meta-item"><span class="meta-label">Changes / 90d</span><span class="meta-value mono">${c.cos90}</span></li></ul>`)}
+      ${notesCard(c.notes)}
+    </div></div>`;
+}
+
+function viewVendor(id, tab) {
+  const v = vendor(id); if (!v) return '';
+  const isFactory = v.roles.includes('Factory');
+  tab = tab || 'shipments'; if (tab === 'forecast' && !isFactory) tab = 'shipments';
+  const vs = vendorShipments(id); const live = vs.filter(s => !isDelivered(s)); const cos = companyChanges(id); const ths = threads.filter(t => t.company === id); const cts = contactsOf(id);
+  const acts = feedEvents().filter(e => e.who.includes(v.name));
+  const overdue = live.filter(s => overdueMs(s) && vendorRoleOn(id, s) && msVendor(s, overdueMs(s).i) === v);
+  const pendingCO = cos.filter(x => x.status === 'pending');
+  const banner = overdue.length ? `<div class="status-banner pending"><i class="bi bi-clock-history"></i><span><strong>${overdue.length} milestone${overdue.length > 1 ? 's' : ''} overdue</strong> on this vendor's legs: ${overdue.map(s => `${esc(po(s.po).job)} · ${esc(s.name)}`).join(' · ')}.</span></div>`
+    : pendingCO.length ? `<div class="status-banner info"><i class="bi bi-arrow-left-right"></i><span><strong>${pendingCO.length} change request${pendingCO.length > 1 ? 's' : ''} pending</strong> from this vendor: ${pendingCO.map(x => esc(x.type)).join(' · ')}.</span></div>`
+    : `<div class="status-banner active"><i class="bi bi-check-circle-fill"></i><span><strong>${live.length} active shipment${live.length === 1 ? '' : 's'}</strong>, nothing overdue on this vendor's legs.</span></div>`;
+  const tabs = showTabs(`vendor-${id}`, [['shipments', vs.length], ...(isFactory ? [['forecast', null]] : []), ['contacts', cts.length], ['changes', cos.length, warnIf(pendingCO.length)], ['chats', ths.length, warnIf(ths.some(t => t.status === 'open'))], ['activity', acts.length]], tab);
+  const tools = { shipments: `<a class="btn btn-sm btn-outline-secondary" href="#settings"><i class="bi bi-sliders me-1"></i>Lead times</a>`, forecast: `<button class="btn btn-sm btn-outline-secondary" onclick="act.stub('<b>Prototype.</b> Export to the factory open-PO sheet format.')"><i class="bi bi-download me-1"></i>Export</button>`, contacts: addContactBtn(), changes: `<a class="btn btn-sm btn-outline-secondary" href="#changes">All change requests</a>`, chats: `<a class="btn btn-sm btn-outline-secondary" href="#chats-open">All chats</a>`, activity: `<a class="btn btn-sm btn-outline-secondary" href="#feed-vendors">Open the feed</a>` }[tab];
+  const shipRow = s => { const p = po(s.po); return actionItem(health(s).k, `<a href="#po-${p.id.slice(3)}" class="text-decoration-none">${esc(p.job)}</a> <span class="text-body-secondary fw-normal">· ${esc(s.name)}</span> <span class="tag">${esc(vendorRoleOn(id, s))}</span>`, `${esc(cust(p.customer).name)} · ${sqft(s.sqft)} · ${esc(stageName(s))}${s.needBy ? ` · need-by <span class="mono">${fmt(s.needBy)}</span>` : ''}`, pill(health(s))); };
+  const main = tab === 'forecast' ? `<div class="stack">${factoryForecast(id)}</div>`
+    : tab === 'contacts' ? listCard(cts.map(ct => contactRow(ct)), 'No contacts yet.')
+    : tab === 'changes' ? listCard(cos.map(x => coRow(x)), 'No change requests.')
+    : tab === 'chats' ? threadCard(ths, 'No conversations with this vendor.')
+    : tab === 'activity' ? feedRowsHtml(acts.slice(0, 60), 'No activity yet.')
+    : listCard([...live, ...vs.filter(isDelivered)].map(shipRow), 'No shipments involve this vendor.');
+  const pc = cts.find(x => x.primary);
+  return pageHeader(esc(v.name), `${v.roles.join(' · ')} · ${esc(v.hq)}`, `<button class="btn btn-outline-secondary btn-sm" onclick="act.stub('<b>Prototype.</b> A rate or booking request email would be drafted here.')"><i class="bi bi-envelope me-1"></i> Email vendor</button>`, { back: 'vendors' }) +
+    banner + pageNav(tabs, tools) +
+    `<div class="show-layout"><div class="show-main">${main}</div><div class="show-sidebar">
+      ${detailCard('Details', '', `<ul class="meta-list">
+        <li class="meta-item"><span class="meta-label">Roles</span><span class="meta-value"><div class="tag-list justify-content-end">${v.roles.map(r => `<span class="tag blue">${esc(r)}</span>`).join('')}</div></span></li>
+        <li class="meta-item"><span class="meta-label">Location</span><span class="meta-value">${esc(v.hq)}</span></li>
+        <li class="meta-item"><span class="meta-label">Primary contact</span><span class="meta-value">${pc ? `<a href="#contact-${pc.id}">${esc(pc.name)}</a><div class="fw-normal text-body-secondary mono">${esc(pc.email)}</div>` : '—'}</span></li>
+        <li class="meta-item"><span class="meta-label">${CONSTRAINT_LABEL[v.constraint]}</span><span class="meta-value mono">${C[v.constraint]} days <a href="#settings" class="fw-normal">change</a></span></li>
+        ${isFactory ? `<li class="meta-item"><span class="meta-label">Booking lead</span><span class="meta-value mono">${C.bookingLead} days</span></li>` : ''}
+        <li class="meta-item"><span class="meta-label">Active shipments</span><span class="meta-value mono">${live.length}</span></li></ul>`)}
+      ${notesCard(v.notes)}
+    </div></div>`;
+}
+
+function viewContact(id, tab) {
+  const ct = contact(id); if (!ct) return '';
+  const co = company(ct.company); const isCust = !co.roles;
+  const cp = isCust ? pos.filter(p => p.customer === co.id) : [];
+  const [first, last] = [ct.name.split(' ')[0], ct.name.split(' ').slice(-1)[0]];
+  const cos = changes.filter(c => c.by.includes(first) && c.by.includes(last));
+  const ths = threads.filter(t => t.contact === id);
+  const acts = feedEvents().filter(e => e.who.includes(ct.name));
+  const tabList = [...(isCust ? [['orders', cp.length]] : []), ['changes', cos.length, warnIf(cos.some(x => x.status === 'pending'))], ['chats', ths.length, warnIf(ths.some(t => t.status === 'open'))], ['activity', acts.length]];
+  tab = tabList.some(t => t[0] === tab) ? tab : tabList[0][0];
+  const banner = ct.status === 'left' ? `<div class="status-banner danger"><i class="bi bi-person-x"></i><span><strong>No longer at ${esc(co.name)}.</strong> ${esc(ct.note || '')}</span></div>`
+    : ct.primary ? `<div class="status-banner active"><i class="bi bi-person-check"></i><span><strong>Primary contact</strong> for ${esc(co.name)}. ${isCust ? 'Gets standing emails, reminders and departure notices.' : 'Gets booking requests, status checks and lead-time questions.'}</span></div>`
+    : `<div class="status-banner info"><i class="bi bi-person"></i><span>Gets only the threads they start. Make them primary to send them standing emails and reminders.</span></div>`;
+  const tabs = showTabs(`contact-${id}`, tabList, tab);
+  const tools = { orders: `<a class="btn btn-sm btn-outline-secondary" href="${companyLink(co)}">Open ${esc(co.name.split(' ')[0])}</a>`, changes: `<a class="btn btn-sm btn-outline-secondary" href="#changes">All change requests</a>`, chats: `<a class="btn btn-sm btn-outline-secondary" href="#chats-open">All chats</a>`, activity: `<a class="btn btn-sm btn-outline-secondary" href="#feed">Open the feed</a>` }[tab];
+  const main = tab === 'changes' ? listCard(cos.map(x => coRow(x)), `No change requests from ${esc(first)}.`)
+    : tab === 'chats' ? threadCard(ths, `No conversations with ${esc(first)}.`)
+    : tab === 'activity' ? feedRowsHtml(acts.slice(0, 60), 'No activity yet.')
+    : listCard(['queue', 'production', 'complete'].flatMap(l => cp.filter(p => p.lane === l)).map(orderRow), 'No orders.');
+  return pageHeader(esc(ct.name), `${esc(ct.title)} · <a href="${companyLink(co)}">${esc(co.name)}</a>`, `${ct.status === 'left' ? sb('danger', 'Left') : sb('active', 'Active')}${!ct.primary && ct.status === 'active' ? `<button class="btn btn-outline-secondary btn-sm" onclick="act.setPrimary('${ct.id}')">Make primary</button>` : ''}<button class="btn btn-outline-secondary btn-sm" onclick="act.stub('<b>Prototype.</b> An email to ${esc(ct.name)} would be drafted here.')"><i class="bi bi-envelope me-1"></i> Email</button>`, { back: 'contacts' }) +
+    banner + pageNav(tabs, tools) +
+    `<div class="show-layout"><div class="show-main">${main}</div><div class="show-sidebar">
+      ${detailCard('Details', '', `<ul class="meta-list">
+        <li class="meta-item"><span class="meta-label">Company</span><span class="meta-value"><a href="${companyLink(co)}">${esc(co.name)}</a><div class="fw-normal text-body-secondary">${companyRoles(co).join(', ')}</div></span></li>
+        <li class="meta-item"><span class="meta-label">Email</span><span class="meta-value mono">${esc(ct.email)}</span></li>
+        <li class="meta-item"><span class="meta-label">Phone</span><span class="meta-value mono">${ct.phone ? esc(ct.phone) : '—'}</span></li>
+        <li class="meta-item"><span class="meta-label">Receives</span><span class="meta-value">${ct.primary ? (isCust ? 'Standing emails, reminders, departure notices' : 'Booking requests, status checks') : 'Only threads they started'}</span></li></ul>`)}
+      <div class="detail-card"><div class="detail-card-header"><h3>Others at ${esc(co.name.split(' ')[0])}</h3></div><ul class="action-list">${contactsOf(co.id).filter(x => x.id !== id).map(x => contactRow(x)).join('') || '<li class="empty">No one else on file.</li>'}</ul></div>
+    </div></div>`;
+}
+
 
 function factoryForecast(vendorId) {
   const months = []; for (let i = 0; i < 9; i++) { const m = new Date(2026, 10 + i, 1); months.push({ y:m.getFullYear(), m:m.getMonth(), label:`${MONTHS[m.getMonth()]} ${String(m.getFullYear()).slice(2)}` }); }
@@ -1644,25 +1752,6 @@ function viewVendors(roleSlug) {
     ${rows.map(v => { const vs = vendorShipments(v.id).filter(s => !isDelivered(s)); const pc = contactsOf(v.id).find(c => c.primary); return `<tr class="link" onclick="go('vendor-${v.id}')"><td class="item-name"><a href="#vendor-${v.id}">${esc(v.name)}</a><div class="item-sub">${esc(v.hq)}</div></td><td><div class="tag-list">${v.roles.map(r => `<span class="tag blue">${esc(r)}</span>`).join('')}</div></td><td>${pc ? `${esc(pc.name)}<div class="item-sub mono">${esc(pc.email)}</div>` : '<span class="text-body-secondary">—</span>'}</td><td class="num">${vs.length}</td><td class="num">${companyChanges(v.id).filter(c => c.status === 'pending').length}</td><td><span class="mono">${v.constraint === 'production' ? C.production : C[v.constraint]} days</span><div class="item-sub">${CONSTRAINT_LABEL[v.constraint]}</div></td></tr>`; }).join('')}
   </tbody></table></div>${tableFooter(rows.length, 'vendors')}</div>`;
 }
-function viewVendor(id) {
-  const v = vendor(id); if (!v) return '';
-  const vs = vendorShipments(id); const cos = companyChanges(id); const isFactory = v.roles.includes('Factory');
-  return pageHeader(esc(v.name), `${v.roles.join(' · ')} · ${esc(v.hq)}`, `<a class="btn btn-outline-secondary btn-sm" href="#settings"><i class="bi bi-sliders me-1"></i> Lead times</a><button class="btn btn-outline-secondary btn-sm" onclick="act.stub('<b>Prototype.</b> A rate or booking request email would be drafted here.')"><i class="bi bi-envelope me-1"></i> Email vendor</button>`, { back: 'vendors' }) +
-  `<div class="show-layout"><div class="show-main">
-    ${isFactory ? factoryForecast(id) : ''}
-    <div class="detail-card"><div class="detail-card-header"><h3>Shipments</h3><span class="card-note">${vs.length} · ${vs.filter(s => !isDelivered(s)).length} active</span></div><ul class="action-list">${vs.length ? vs.map(s => { const p = po(s.po); return actionItem(health(s).k, `<a href="#po-${p.id.slice(3)}" class="text-decoration-none">${esc(p.job)}</a> <span class="text-body-secondary fw-normal">· ${esc(s.name)}</span> <span class="tag">${esc(vendorRoleOn(id, s))}</span>`, `${esc(cust(p.customer).name)} · ${sqft(s.sqft)} · ${esc(stageName(s))}${s.needBy ? ` · need-by <span class="mono">${fmt(s.needBy)}</span>` : ''}`, pill(health(s))); }).join('') : '<li class="empty">No shipments involve this vendor.</li>'}</ul></div>
-    <div class="detail-card"><div class="detail-card-header"><h3>Change requests</h3><a class="card-action" href="#changes">All change requests</a></div><ul class="action-list">${cos.length ? cos.map(x => coRow(x)).join('') : '<li class="empty">None.</li>'}</ul></div>
-  </div><div class="show-sidebar">
-    ${detailCard('Details', '', `<ul class="meta-list">
-      <li class="meta-item"><span class="meta-label">Roles</span><span class="meta-value"><div class="tag-list justify-content-end">${v.roles.map(r => `<span class="tag blue">${esc(r)}</span>`).join('')}</div></span></li>
-      <li class="meta-item"><span class="meta-label">Location</span><span class="meta-value">${esc(v.hq)}</span></li>
-      <li class="meta-item"><span class="meta-label">${CONSTRAINT_LABEL[v.constraint]}</span><span class="meta-value mono">${C[v.constraint]} days <a href="#settings" class="fw-normal">change</a></span></li>
-      ${isFactory ? `<li class="meta-item"><span class="meta-label">Booking lead</span><span class="meta-value mono">${C.bookingLead} days</span></li>` : ''}
-      <li class="meta-item"><span class="meta-label">Active shipments</span><span class="meta-value mono">${vs.filter(s => !isDelivered(s)).length}</span></li></ul>`)}
-    <div class="detail-card"><div class="detail-card-header"><h3>Contacts</h3><a class="card-action" href="#contacts" onclick="act.stub('<b>Prototype.</b> New contact form would open here.')"><i class="bi bi-plus-lg me-1"></i>Add</a></div><ul class="action-list">${contactsOf(id).map(ct => contactRow(ct)).join('') || '<li class="empty">No contacts yet.</li>'}</ul></div>
-    ${detailCard('Notes', '', `<div style="font-size:14px;color:var(--text-2);line-height:1.6">${esc(v.notes)}</div>`)}
-  </div></div>`;
-}
 function viewContacts(tab) {
   const isVendorContact = ct => !!company(ct.company).roles;
   const rows = contacts.filter(ct => (!tab || (tab === 'vendors') === isVendorContact(ct)) && (T.contactFilter === 'all' || (T.contactFilter === 'primary' ? ct.primary : ct.status === 'left')) && matches(ct.name, ct.title, ct.email, company(ct.company).name));
@@ -1675,27 +1764,6 @@ function viewContacts(tab) {
   `<div class="data-table-wrapper"><div class="table-responsive"><table class="table table-hover"><thead><tr><th>Name</th><th>Company</th><th>Title</th><th>Email</th><th>Phone</th><th>Status</th></tr></thead><tbody>
     ${rows.map(ct => { const co = company(ct.company); return `<tr class="link" onclick="go('contact-${ct.id}')"><td class="item-name"><a href="#contact-${ct.id}">${esc(ct.name)}</a>${ct.primary ? '<div class="item-sub">Primary contact</div>' : ''}</td><td><a href="${companyLink(co)}" class="text-decoration-none">${esc(co.name)}</a><div class="item-sub">${companyRoles(co).join(', ')}</div></td><td>${esc(ct.title)}</td><td class="mono">${esc(ct.email)}</td><td class="mono">${ct.phone ? esc(ct.phone) : '—'}</td><td>${ct.status === 'left' ? sb('danger', 'Left') : sb('active', 'Active')}</td></tr>`; }).join('')}
   </tbody></table></div>${tableFooter(rows.length, 'contacts')}</div>`;
-}
-function viewContact(id) {
-  const ct = contact(id); if (!ct) return '';
-  const co = company(ct.company); const isCust = !co.roles;
-  const cp = isCust ? pos.filter(p => p.customer === co.id) : [];
-  const cos = changes.filter(c => c.by.includes(ct.name.split(' ')[0]) && c.by.includes(ct.name.split(' ').slice(-1)[0]));
-  const mentions = pos.flatMap(p => p.activity.filter(a => a[1].includes(ct.name)).map(a => [a[0], a[1], p]));
-  return pageHeader(esc(ct.name), `${esc(ct.title)} · <a href="${companyLink(co)}">${esc(co.name)}</a>`, `${ct.status === 'left' ? sb('danger', 'Left') : sb('active', 'Active')}${ct.primary ? sb('active', 'Primary contact') : (ct.status === 'active' ? `<button class="btn btn-outline-secondary btn-sm" onclick="act.setPrimary('${ct.id}')">Make primary</button>` : '')}<button class="btn btn-outline-secondary btn-sm" onclick="act.stub('<b>Prototype.</b> An email to ${esc(ct.name)} would be drafted here.')"><i class="bi bi-envelope me-1"></i> Email</button>`, { back: 'contacts' }) +
-  (ct.note ? `<div class="status-banner danger"><i class="bi bi-person-x"></i><span>${esc(ct.note)}</span></div>` : '') +
-  `<div class="show-layout"><div class="show-main">
-    ${isCust ? `<div class="detail-card"><div class="detail-card-header"><h3>Orders at ${esc(co.name)}</h3><span class="card-note">${cp.length}</span></div><ul class="action-list">${cp.map(p => { const h = poHealth(p); return actionItem(h, `<a href="#po-${p.id.slice(3)}" class="text-decoration-none">${esc(p.job)}</a> <span class="mono text-body-secondary fw-normal">${p.id}</span>`, `${sqft(p.sqft)} · ${shipsOf(p.id).length} shipments`, pill({k:h, t:PO_LABEL[h]})); }).join('') || '<li class="empty">No orders.</li>'}</ul></div>` : ''}
-    <div class="detail-card"><div class="detail-card-header"><h3>Change requests from ${esc(ct.name.split(' ')[0])}</h3></div><ul class="action-list">${cos.length ? cos.map(x => coRow(x)).join('') : '<li class="empty">None.</li>'}</ul></div>
-    <div class="detail-card"><div class="detail-card-header"><h3>Activity</h3></div><div class="detail-card-body" style="padding:6px 20px"><ul class="timeline">${mentions.length ? mentions.reverse().map(a => `<li class="timeline-item"><div class="timeline-icon blue"><i class="bi bi-envelope"></i></div><div class="minw0"><div class="timeline-text">${esc(a[1])} <a href="#po-${a[2].id.slice(3)}">${esc(a[2].job)}</a></div><div class="timeline-time">${fmtLong(a[0])}</div></div></li>`).join('') : '<li class="timeline-item"><div class="timeline-text text-body-secondary">No activity recorded.</div></li>'}</ul></div></div>
-  </div><div class="show-sidebar">
-    ${detailCard('Details', '', `<ul class="meta-list">
-      <li class="meta-item"><span class="meta-label">Company</span><span class="meta-value"><a href="${companyLink(co)}">${esc(co.name)}</a><div class="fw-normal text-body-secondary">${companyRoles(co).join(', ')}</div></span></li>
-      <li class="meta-item"><span class="meta-label">Email</span><span class="meta-value mono">${esc(ct.email)}</span></li>
-      <li class="meta-item"><span class="meta-label">Phone</span><span class="meta-value mono">${ct.phone ? esc(ct.phone) : '—'}</span></li>
-      <li class="meta-item"><span class="meta-label">Receives</span><span class="meta-value">${ct.primary ? 'Standing emails, reminders, departure notices' : 'Only threads they started'}</span></li></ul>`)}
-    <div class="detail-card"><div class="detail-card-header"><h3>Others at ${esc(co.name.split(' ')[0])}</h3></div><ul class="action-list">${contactsOf(co.id).filter(x => x.id !== id).map(x => contactRow(x)).join('') || '<li class="empty">No one else on file.</li>'}</ul></div>
-  </div></div>`;
 }
 
 function viewSettings() {
@@ -1866,11 +1934,11 @@ function crumbs() {
   else if (route.startsWith('chats-')) items.push(['Chats', 'chats-inbox'], [CHAT_TABS.find(x => x[0] === route.slice(6))?.[1] || 'My inbox', null]);
   else if (route.startsWith('chat-')) { const t = thread(route.slice(5)); const tab = activeNav().slice(6); items.push(['Chats', 'chats-inbox'], [CHAT_TABS.find(x => x[0] === tab)?.[1] || 'Open', 'chats-' + tab], [t ? t.subject : route, null]); }
   else if (route === 'customers') items.push(['Customers', null]);
-  else if (route.startsWith('customer-')) { const c = cust(route.slice(9)); items.push(['Customers', 'customers'], [c ? c.name : route, null]); }
+  else if (route.startsWith('customer-')) { const r = parseShow('customer-', cust, CUSTOMER_SHOW_TABS); const c = cust(r.id); items.push(['Customers', 'customers'], [c ? c.name : route, r.tab ? 'customer-' + r.id : null], ...(r.tab ? [[TAB_LABEL[r.tab], null]] : [])); }
   else if (route === 'vendors') items.push(['Vendors', null]);
-  else if (route.startsWith('vendor-')) { const v = vendor(route.slice(7)); items.push(['Vendors', 'vendors'], [v ? v.name : route, null]); }
+  else if (route.startsWith('vendor-')) { const r = parseShow('vendor-', vendor, VENDOR_SHOW_TABS); const v = vendor(r.id); items.push(['Vendors', 'vendors'], [v ? v.name : route, r.tab ? 'vendor-' + r.id : null], ...(r.tab ? [[TAB_LABEL[r.tab], null]] : [])); }
   else if (route === 'contacts') items.push(['Contacts', null]);
-  else if (route.startsWith('contact-')) { const c = contact(route.slice(8)); items.push(['Contacts', 'contacts'], [c ? c.name : route, null]); }
+  else if (route.startsWith('contact-')) { const r = parseShow('contact-', contact, CONTACT_SHOW_TABS); const c = contact(r.id); items.push(['Contacts', 'contacts'], [c ? c.name : route, r.tab ? 'contact-' + r.id : null], ...(r.tab ? [[TAB_LABEL[r.tab], null]] : [])); }
   else if (route === 'settings') items.push(['Constraints', null]);
   return items;
 }
@@ -1963,14 +2031,14 @@ function renderMain() {
   else if (route.startsWith('ship-')) body = viewShipEdit(route.slice(5));
   else if (route === 'changes' || route.startsWith('changes-')) { coTab = route === 'changes' ? 'pending' : route.slice(8); if (!CO_STATUS[coTab]) coTab = 'pending'; body = viewChanges(); }
   else if (route === 'customers' || route.startsWith('customers-')) body = viewCustomers(route === 'customers' ? null : route.slice(10));
-  else if (route.startsWith('customer-')) body = viewCustomer(route.slice(9));
+  else if (route.startsWith('customer-')) { const r = parseShow('customer-', cust, CUSTOMER_SHOW_TABS); body = viewCustomer(r.id, r.tab); }
   else if (route.startsWith('chats-')) { lastChatTab = route.slice(6); body = viewChats(lastChatTab); }
   else if (route.startsWith('chat-')) { const t = thread(route.slice(5)); const tab = t ? activeNav().slice(6) : 'inbox'; body = viewChats(tab, t ? t.id : null); }
   else if (route === 'vendors' || route.startsWith('vendors-')) body = viewVendors(route === 'vendors' ? null : route.slice(8));
-  else if (route.startsWith('vendor-')) body = viewVendor(route.slice(7));
+  else if (route.startsWith('vendor-')) { const r = parseShow('vendor-', vendor, VENDOR_SHOW_TABS); body = viewVendor(r.id, r.tab); }
   else if (route === 'contacts' || route.startsWith('contacts-')) body = viewContacts(route === 'contacts' ? null : route.slice(9));
-  else if (route.startsWith('contact-')) body = viewContact(route.slice(8));
-  else if (route === 'forecast') body = viewVendor('daizhin');
+  else if (route.startsWith('contact-')) { const r = parseShow('contact-', contact, CONTACT_SHOW_TABS); body = viewContact(r.id, r.tab); }
+  else if (route === 'forecast') body = viewVendor('daizhin', 'forecast');
   else if (route === 'settings') body = viewSettings();
   else body = viewToday();
   main.innerHTML = topbar() + `<div class="page-content">${body}</div>`;
