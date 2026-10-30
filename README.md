@@ -24,7 +24,7 @@ Sample data only. "Today" is pinned to Oct 26, 2026 so the milestone math stays 
 
 - **Purchase order → shipments → milestones.** The shipment is the unit of tracking. "Container 1" or "Pallet 1" is just a name the team chooses. The kind is either an ocean container or an LTL pallet.
 - **Milestones come from editable lead times** (Constraints page). Change a lead time and every planned date recalculates. Ocean transit by port uses medians from the order history. The other numbers are placeholders until purchasing confirms them.
-- **Ship-by dates.** The mill produces to a ship-by date, not to the day it's ordered. A confirmed booking replaces the estimated departure and arrival. A milestone that passes with nothing recorded is flagged, and everything after it moves.
+- **Ship-by dates.** Ship-by is the date the container departs the origin port to make the need-by (Ryan, Oct 28), and the mill finishes production ahead of it. Purchasing sets it to the need-by minus 28 days for West Coast ports and 35 for Gulf and East Coast. A confirmed booking replaces the estimated departure and arrival. A milestone that passes with nothing recorded is flagged, and everything after it moves.
 - **Need-by dates can be a date, ASAP, or relative to another shipment** ("six weeks after Container 1"). The customer's requested date is kept next to the date we committed to.
 - **Companies hold roles.** Customers and vendors are both companies. Vendor roles are factory, freight forwarder, customs broker, drayage carrier, LTL carrier, and warehouse, and each role owns a lead time. Contacts are people at a company. The primary contact gets standing emails and reminders.
 
@@ -44,9 +44,14 @@ The lane is worked out from the shipments, not stored. Individual shipments can 
 - **The system proposes, a person approves.** Every next step (place an order, send a notice, chase a document, reply to a thread) is drafted and waits for a click. Nothing goes out on its own. Actions approved almost every time can later be switched to automatic.
 - **A checklist runs before the factory order:** account package, credit, deposit, preliminary notice, tax status, signed acknowledgement, and delivery contact. Any item can be overridden, and the override is logged on the order.
 - **Change requests live in one place.** Each one has a context (shipment, order, customer, vendor, or contact). The statuses mirror the action names: Approve → Approved, Modify → Modified, Reject → Rejected.
-- **Chats replace the inbox.** Emails and portal messages are merged into threads. Open means they spoke last and we owe a reply. Awaiting reply means we spoke last. My inbox is everything assigned to me that isn't closed. Replies are drafted from the order, the change request, and the thread for a person to edit or send.
+- **Chats replace the inbox.** Emails and portal messages are merged into threads. Open means they spoke last and we owe a reply. Awaiting reply means we spoke last. My inbox is everything assigned to me that isn't closed. A reply can be drafted from the order, the change request and the thread with one click. It is never pre-filled: the Chats page counts how often Draft a reply is clicked and whether the draft is sent as written, edited or discarded, so the team can decide later whether drafting earns its place.
+- **Open order status email.** Annalisa's report, kept as the format everyone already reads: one row per open shipment with job, PO and order numbers, product and spec, quantity and cartons, destination, placement date, the PO's need-by next to the current need-by, ETD, ETA to the US port and to the destination, and a notes log the system writes from the order record. It goes to the customer's primary contact on the cadence in Constraints (weekly) and asks them to confirm the dates; a reply that moves a date becomes a change request. The team copy adds internal references. Preview, download and send it from the customer page.
+- **Delivery appointments.** The site contact's notice rule lives on the shipment (24 hours and an appointment for TCC sites, 48 hours for ILG). When the carrier cannot reach the site contact, the system proposes a notice to the customer flagged "Action required" and dispatch holds until a window is confirmed.
+- **Recorded, not typed.** Milestones and steps that came from vendor emails and portals carry a robot icon naming the source. A click is only for a decision or for something that happens outside the system.
 
 ### Customer portal
+
+Second priority. Alan (Oct 29) wants the open order status email before customer system access, so the portal stays in the prototype but the demo leads with the report.
 
 - **Sign-in is a link from email.** The portal shows orders in production, in queue, and completed, plus a "What we need from you" list.
 - **Customers change dates in place.** Setting or changing a need-by creates a change request for the team, not an email.
@@ -90,4 +95,6 @@ A single feed was considered and rejected. A time-ordered list buries urgent app
 
 - Confirmed lead times from purchasing. Two things are still unknown: whether the order matrix's production date means finished or scheduled, and how much of the gap before sailing is waiting for a booking.
 - Sample PO emails (good, bad, typical, and non-PDF) and a customer list export.
+- The production deadline purchasing uses ahead of the ship-by (departure) date.
+- Who owns the delivery appointment, the carrier or Surface Edge, and how long a no-answer waits before it escalates.
 - The ERP replacing the current system in February 2027. Until then the bridge is a CSV export, not an integration.

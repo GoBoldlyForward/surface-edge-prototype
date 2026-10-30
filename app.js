@@ -33,7 +33,7 @@ const rel = dt => { const n = diffDays(dt, TODAY); if (n === 0) return 'today'; 
 const C = {
   production: 45, loadout: 21, loadoutUrgent: 10, clearance: 5, drayage: 3, bookingLead: 21, bookingBack: 5, pick: 2, ground: 4,
   ocean: { 'Los Angeles': 14, 'Long Beach': 14, 'Houston': 30, 'Savannah': 33, 'Charleston': 32, 'Miami': 32, 'Tampa': 32, 'Portland': 21, 'Tacoma': 18 },
-  reminderDays: 7, stopUsDays: 10, standingEmailDays: 14,
+  reminderDays: 7, stopUsDays: 10, standingEmailDays: 7,
 };
 /* How much history each ocean median rests on. Small samples are worth a second look from Ryan. */
 const OCEAN_HISTORY = { 'Los Angeles':'16 shipments, LA and Long Beach together', 'Long Beach':'16 shipments, LA and Long Beach together', 'Houston':'87 shipments', 'Savannah':'916 shipments', 'Charleston':'5 shipments', 'Miami':'34 shipments, Florida ports together', 'Tampa':'34 shipments, Florida ports together', 'Portland':'67 shipments', 'Tacoma':'3 shipments, Tacoma and Seattle' };
@@ -186,7 +186,7 @@ const ORDER_REFS = { 'PO-4471':{ custPO:'88213', jobNo:'WC-118' }, 'PO-4495':{ c
 const SITE_RULES = ['Schedule delivery 48 hours ahead with the superintendent', 'Call 2 hours before arrival', 'Mark material with the customer PO number'];
 const FAIRWAY_SITE = { name:'Ray Delgado, superintendent', phone:'(713) 555-0136', site:'Job site', dock:false, forklift:true, rules:SITE_RULES };
 const ILG_DALLAS = { name:'ILG Dallas receiving', phone:'(214) 555-0150', site:'Warehouse', dock:true, forklift:true, rules:['Receiving 7 am to 2 pm, Monday to Friday', 'Appointment required'] };
-const PEACHTREE_SITE = { name:'Marcus Bell, superintendent', phone:'(404) 555-0177', site:'Job site', dock:false, forklift:true, rules:SITE_RULES };
+const PEACHTREE_SITE = { name:'Marcus Bell, superintendent', phone:'(404) 555-0177', site:'Job site', dock:false, forklift:true, rules:['24 hours notice and a delivery appointment with the superintendent', 'Call 2 hours before arrival', 'Mark material with the customer PO number'] };
 const SHIP_REFS = {
   S1:  { sidemark:'Fairway Westchase - Bldg A', erpOrder:'361102', factoryPO:'874410-ZSE', delivery:FAIRWAY_SITE },
   S2:  { sidemark:'Fairway Westchase - Bldg B', erpOrder:'361103', factoryPO:'874411-ZSE', delivery:FAIRWAY_SITE },
@@ -196,16 +196,21 @@ const SHIP_REFS = {
   S7:  { custPO:'2026-0415-1', sidemark:'Peachtree Ph2-UNITS-Trk 1', erpOrder:'389870', factoryPO:'877305-ZSE', delivery:PEACHTREE_SITE },
   S8:  { custPO:'2026-0415-2', sidemark:'Peachtree Ph2-UNITS-Trk 2', erpOrder:'389871', delivery:PEACHTREE_SITE },
   S9:  { custPO:'2026-0415-3', sidemark:'Peachtree Ph2-AMENITY', erpOrder:'389872', delivery:PEACHTREE_SITE },
-  S10: { sidemark:'Cedar Ridge', erpOrder:'390455', delivery:{ name:'Gail Munro', phone:'(509) 555-0102', site:'Job site', dock:false, forklift:false, rules:['Liftgate required'] } },
+  S10: { sidemark:'Cedar Ridge', erpOrder:'390455', delivery:{ name:'Dale Pruitt, superintendent', phone:'(509) 555-0144', site:'Job site', dock:false, forklift:false, rules:['Liftgate required', '24 hours notice and a delivery appointment'] }, appt:{ notice:24, carrier:'cascade-ltl', attempts:['2026-10-24', '2026-10-26'], status:'unreachable' } },
   S18: { custPO:'2026-0502', sidemark:'Sugarloaf-UNITS-Trk 1' },
 };
 pos.forEach(p => Object.assign(p, ORDER_REFS[p.id]));
 shipments.forEach(s => Object.assign(s, SHIP_REFS[s.id]));
+po('PO-4490').activity.push(['2026-10-24', 'Cascade LTL called Dale Pruitt to set the delivery appointment for Pallet 1; no answer.'], ['2026-10-26', 'Cascade LTL called Dale Pruitt again; no answer. Dispatch held until someone confirms a window.']);
 const refList = s => { const p = po(s.po); return [['Customer PO', s.custPO || p.custPO], ['Job', p.jobNo], ['Sidemark', s.sidemark], ['Navigator order', s.erpOrder], ['Factory PO', s.factoryPO], ['Booking', s.booking && s.booking.ref], ['Container', s.booking && s.booking.container]].filter(x => x[1]); };
 const refText = s => refList(s).map(x => x[1]).join(' ');
 const deliveryHtml = s => s.delivery
-  ? `<div class="detail-value">${esc(s.delivery.name)} · <span class="mono">${esc(s.delivery.phone)}</span></div><div class="item-sub mt-1">${esc(s.delivery.site)} · dock door ${s.delivery.dock ? 'yes' : 'no'} · forklift ${s.delivery.forklift ? 'yes' : 'no'}</div>${s.delivery.rules.map(r => `<div class="item-sub">${esc(r)}</div>`).join('')}`
+  ? `<div class="detail-value">${esc(s.delivery.name)} · <span class="mono">${esc(s.delivery.phone)}</span></div><div class="item-sub mt-1">${esc(s.delivery.site)} · dock door ${s.delivery.dock ? 'yes' : 'no'} · forklift ${s.delivery.forklift ? 'yes' : 'no'}</div>${s.delivery.rules.map(r => `<div class="item-sub">${esc(r)}</div>`).join('')}${apptHtml(s)}`
   : `<div class="detail-value">${sb('pending', 'no delivery contact yet')}</div>`;
+/* The carrier sets the appointment with the site contact. When nobody answers, dispatch holds and the customer is told why. */
+const apptHtml = s => { if (!s.appt) return ''; const a = s.appt, cr = vendor(a.carrier);
+  if (a.status !== 'unreachable') return `<div class="item-sub mt-1"><i class="bi bi-calendar-check me-1"></i>Delivery appointment ${fmt(a.for)}, set ${fmt(a.set)} by ${esc(cr.name)}.</div>`;
+  return `<div class="item-sub mt-1 ${a.notified ? 'text-warning' : 'text-danger'}"><i class="bi bi-telephone-x me-1"></i>${esc(cr.name)} could not reach ${esc(s.delivery.name.split(',')[0])}: ${a.attempts.length} calls, ${a.attempts.map(x => fmt(x)).join(' and ')}. ${a.notified ? `Customer notified ${fmt(a.notified)}, flagged "Action required".` : 'Dispatch held until someone answers.'}</div>`; };
 
 /* Vendor roles on each shipment: where it comes from, who books the freight, who moves the last leg. */
 const ORIGIN_CO = { 'Daizhin, Korea':'daizhin', 'Wanke Georgia':'wanke-ga', 'Wanke Portland':'wanke-pdx' };
@@ -264,7 +269,7 @@ const changes = [
   { id:'CO-2034', context:'Vendor', target:'daizhin', by:'Vendor · Ji-ho Park (Daizhin)', via:'Email', received:'2026-10-23', type:'Lead time change', from:'45-day production', to:'52-day production through Feb 1, 2027', status:'pending',
     impact:'Holiday shutdown at the mill. Every unplaced Daizhin shipment with a place-by date before Feb 1 moves 7 days earlier. Container 2 of Peachtree Commons would need to be placed by Oct 30. Recommend: approve and set the production constraint to 52.' },
   { id:'CO-2035', context:'Contact', target:'ilg', by:'Customer · Marcus Hale (ILG)', via:'Email', received:'2026-10-22', type:'Primary contact change', from:'Dana Whitfield', to:'Marcus Hale for Dallas jobs', status:'pending',
-    impact:'Need-by dates on Lakeshore Flats were given by Renee Castillo, who has left. Marcus should confirm them. Recommend: approve and resend the Lakeshore standing email to Marcus.' },
+    impact:'Need-by dates on Lakeshore Flats were given by Renee Castillo, who has left. Marcus should confirm them. Recommend: approve and resend the Lakeshore open order status to Marcus.' },
   { id:'CO-2036', context:'Customer', target:'tcc', by:'Customer · Amber Shaw (TCC)', via:'Email', received:'2026-10-21', type:'Billing change', from:'Bill to Atlanta HQ', to:'Bill to TCC Interiors – Gwinnett LLC (tax-exempt, certificate attached)', status:'approved', note:'Melissa · Oct 22',
     impact:'Applies to Sugarloaf only. Tax status on PO-4515 set to exempt.' },
   { id:'CO-2037', context:'Order', po:'PO-4503', by:'Sales · Alan', via:'Phone', received:'2026-10-20', type:'Add shipment', from:'2 shipments (96,000 sq ft)', to:'3 shipments (112,000 sq ft)', status:'rejected', note:'Rob · Oct 20',
@@ -312,7 +317,7 @@ function ackNeeds(p) {
 }
 function ackDoc(p) {
   const c = cust(p.customer), sh = shipsOf(p.id), needs = ackNeeds(p);
-  /* Like the Navigator printout: each line (with any substitution), the price we acknowledge, and per shipment the customer's references, the mill's ship-by date, the delivery date and who to call. */
+  /* Like the Navigator printout: each line (with any substitution), the price we acknowledge, and per shipment the customer's references, the ship-by (departure) date, the delivery date and who to call. */
   const refs = s => [s.custPO || p.custPO ? `your PO ${s.custPO || p.custPO}` : null, s.sidemark].filter(Boolean).map(esc).join(' · ');
   const lineRow = l => { const price = l.ackPrice || l.price, pack = l.sqft ? packOf(l.supplied || l.product, l.sqft) : null;
     return `<tr><td>${esc(l.product)}${l.supplied ? `<div class="item-sub">Supplying ${esc(l.supplied)}${l.labelAs ? ', labeled as ordered' : ''}</div>` : ''}</td><td class="num">${l.unit ? `${l.qty.toLocaleString()} ${esc(l.unit)}` : sqft(l.sqft)}${pack ? `<div class="item-sub">${pack.cartons.toLocaleString()} cartons · ${pack.pallets} pallets${pack.extra ? ` + ${pack.extra}` : ''}</div>` : ''}</td><td class="num">${price ? `$${price.toFixed(2)}${l.ackPrice && l.ackPrice !== l.price ? `<div class="item-sub">your PO: $${l.price.toFixed(2)}</div>` : ''}` : '—'}</td></tr>`; };
@@ -325,9 +330,9 @@ function ackDoc(p) {
       <li class="meta-item"><span class="meta-label">Your order</span><span class="meta-value">${esc(p.source.replace(/^PDF \(|\)$/g, ''))}, received ${fmtLong(p.received)}</span></li>
       <li class="meta-item"><span class="meta-label">Job</span><span class="meta-value">${esc(p.job)}${p.jobNo ? ` (job ${esc(p.jobNo)})` : ''} · ${esc(p.site)}</span></li></ul>
     <div class="table-responsive"><table class="table table-sm mb-3"><thead><tr><th>Item</th><th class="num">Quantity</th><th class="num">Price</th></tr></thead><tbody>${linesOf(p).map(lineRow).join('')}</tbody></table></div>
-    <div class="table-responsive"><table class="table table-sm mb-3"><thead><tr><th>Shipment</th><th class="num">Sq ft</th><th>Mill ships by</th><th>Deliver by</th><th>Deliver to</th></tr></thead><tbody>${sh.map(s => `<tr><td>${esc(s.name)}${refs(s) ? `<div class="item-sub">${refs(s)}</div>` : ''}</td><td class="num">${s.sqft.toLocaleString()}</td><td class="mono">${shipBy(s)}</td><td class="mono">${deliverBy(s)}</td><td>${/missing/i.test(s.dest) ? 'to be confirmed' : esc(s.dest)}${s.delivery ? `<div class="item-sub">${esc(s.delivery.name)} · ${esc(s.delivery.phone)}</div>` : ''}</td></tr>`).join('')}</tbody></table></div>
+    <div class="table-responsive"><table class="table table-sm mb-3"><thead><tr><th>Shipment</th><th class="num">Sq ft</th><th>Ships by (departs origin)</th><th>Deliver by</th><th>Deliver to</th></tr></thead><tbody>${sh.map(s => `<tr><td>${esc(s.name)}${refs(s) ? `<div class="item-sub">${refs(s)}</div>` : ''}</td><td class="num">${s.sqft.toLocaleString()}</td><td class="mono">${shipBy(s)}</td><td class="mono">${deliverBy(s)}</td><td>${/missing/i.test(s.dest) ? 'to be confirmed' : esc(s.dest)}${s.delivery ? `<div class="item-sub">${esc(s.delivery.name)} · ${esc(s.delivery.phone)}</div>` : ''}</td></tr>`).join('')}</tbody></table></div>
     ${needs.length ? `<p class="mb-2"><b>Before we place this with the factory we need</b> ${needs.map(esc).join('; ')}.</p>` : ''}
-    <p class="mb-2">Delivery dates are at the address shown. We ask the mill to produce for the ship-by date so each shipment arrives on its delivery date. Changes after signature go through a change request.</p>
+    <p class="mb-2">Delivery dates are at the address shown. Ship-by is the date each container departs the origin port to make its delivery date; the mill finishes production ahead of it. Changes after signature go through a change request.</p>
     <p class="mb-0">Please review, sign and return within 48 hours. Agreed and accepted by: ______________________</p></div>`;
 }
 function ackCard(p) {
@@ -338,6 +343,8 @@ function ackCard(p) {
 
 /* Chats: every inbound email or portal message is merged into a thread by sender and subject. status: open = their move is done, ours is due; awaiting = we replied, waiting on them; closed = resolved. */
 let ME = 'ryan';
+/* A reply is drafted only when someone clicks Draft a reply (Morgan, Oct 29). The count shows whether the button earns its place. */
+const draftStats = { since:'2026-09-28', requested:11, sentAsIs:4, edited:5, discarded:2 };
 const TEAM = { ryan:'Ryan K.', melissa:'Melissa R.', marlene:'Marlene O.', alan:'Alan B.' };
 const threads = [
   { id:'T3', subject:'Re: Fairway at Westchase – container 3', company:'ilg', contact:'ct1', assignee:'ryan', status:'open', po:'PO-4471', co:'CO-2031', unread:true,
@@ -429,14 +436,15 @@ function durations(s) {
     : [0, C.pick, 1, C.ground];
 }
 const totalDays = s => durations(s).reduce((a, b) => a + b, 0);
-/* The mill produces to a ship-by date, which the acknowledgement spells out ("produce according to needed ship by date"). Purchasing sets it
-   to the need-by minus 28 days for West Coast ports and minus 35 for Gulf and East Coast ports, on nearly every line of the open-PO sheet.
+/* Ship-by is the date the container departs the origin port to make the need-by (Ryan, Oct 28); the mill finishes production ahead of it.
+   Purchasing sets it to the need-by minus 28 days for West Coast ports and minus 35 for Gulf and East Coast ports, on nearly every line of the open-PO sheet.
    A container that stops at a warehouse keeps the leg-by-leg count, since its need-by is at the job. */
 const WEST_COAST = ['Los Angeles', 'Long Beach', 'Portland', 'Tacoma'];
 Object.assign(C, { shipByWest: 28, shipByEast: 35 });
 const afterSailDays = s => durations(s).slice(3).reduce((a, b) => a + b, 0);
 const shipByDays = s => s.via ? afterSailDays(s) : WEST_COAST.includes(s.port) ? C.shipByWest : C.shipByEast;
 function shipByDate(s) { if (s.type !== 'container' || !s.needBy) return null; return addDays(s.needBy, -shipByDays(s)); }
+const productionBy = s => shipByDate(s) ? addDays(shipByDate(s), -(s.asap ? C.loadoutUrgent : C.loadout)) : null;
 /* Days a container placed early is held back so it ships on its ship-by date instead of as soon as it can be made. */
 function holdDays(s) {
   const sb = s.placedAt && !s.actual[2] && !(s.booking && s.booking.etd) ? shipByDate(s) : null; if (!sb) return 0;
@@ -540,11 +548,13 @@ function nextActions() {
   pos.filter(p => p.lane === 'queue').forEach(p => { const r = queueReasons(p); if (!r.length) return;
     const waitingOn = p.gate.some(g => g[3] === 'pending' && g[2] === 'Customer') || shipsOf(p.id).some(s => !s.needBy);
     a.push({ id:'remind-'+p.id, k:'muted', t:waitingOn ? `Remind ${cust(p.customer).name} what we still need on ${p.job}` : `Internal items open on ${p.job}`, d:r.join(' · '), link:'po-'+p.id.slice(3), btn: waitingOn ? 'Approve: send reminder' : null, open: !waitingOn, toast:`Reminder sent to ${cust(p.customer).contact} with ${r.length} open item${r.length>1?'s':''} and a portal link.` }); });
-  threads.filter(t => t.status === 'open' && t.draft && !t.draftDismissed).forEach(t => a.push({ id:'draft-'+t.id, k:'info', t:`Reply to ${t.contact ? contact(t.contact).name : 'sender'}: ${t.subject}`, d:`Drafted from ${[t.po ? po(t.po).job : null, t.co, ...(t.cos || [])].filter(Boolean).join(t.cos ? ', ' : ' and ') || 'the thread'}: "${t.draft.split('\n').filter(l => l.trim() && !/^(hi|dear)\b/i.test(l))[0].slice(0, 110)}…"`, link:'chat-'+t.id, btn:'Approve: send draft', fn:`act.sendDraft('${t.id}')` }));
+  threads.filter(t => t.status === 'open').forEach(t => { const last = t.msgs.filter(m => m[0] === 'them').slice(-1)[0]; a.push({ id:'draft-'+t.id, k:'info', t:`Reply to ${t.contact ? contact(t.contact).name : 'sender'}: ${t.subject}`, d:`They wrote ${last ? fmt(last[1].slice(0, 10)) : 'recently'}: "${(last ? last[2] : '').replace(/\s+/g, ' ').slice(0, 110)}…" Draft a reply in the thread is one click away.`, link:'chat-'+t.id, open:true }); });
   shipments.filter(s => s.placedAt && s.stage === 1 && s.type === 'container').forEach(s => a.push({ id:'stop-'+s.id, k:'info', t:`"Stop us or it ships": ${s.name} of ${po(s.po).job} departs ${fmt(milestones(s)[2].date)}`, d:`Standing notice ${C.stopUsDays} days before departure. No reply means it ships.`, link:'po-'+s.po.slice(3), btn:'Approve: send notice', toast:'Departure notice sent. Customer has until departure to change.' }));
   shipments.filter(s => s.placedAt && !isDelivered(s) && overdueMs(s)).forEach(s => { const m = overdueMs(s), v = msVendor(s, m.i); a.push({ id:'overdue-'+s.id, k:'warn', t:`Check on ${s.name} of ${po(s.po).job}: ${(MS_SHORT[m.name] || m.name).toLowerCase()} not recorded`, d:`Estimated ${fmt(m.due)}; nothing recorded ${m.overdue} day${m.overdue > 1 ? 's' : ''} later. Later dates now count from today.`, link:'po-'+s.po.slice(3), btn:'Approve: ask for status', toast:`Status request sent to ${v ? esc(v.name) : 'the vendor'}.` }); });
   shipments.filter(bookingLate).forEach(s => a.push({ id:'book-'+s.id, k:'warn', t:`Request a booking for ${s.name} of ${po(s.po).job}`, d:`Should have gone out by ${fmt(bookingBy(s))}, ${C.bookingLead} days before it sails ${fmt(milestones(s)[2].date)}. Bookings come back within about ${C.bookingBack} days.`, link:'po-'+s.po.slice(3), btn:'Approve: request booking', fn:`act.requestBooking('${s.id}')` }));
   shipments.filter(bookingStuck).forEach(s => a.push({ id:'book-chase-'+s.id, k:'warn', t:`Chase the booking for ${s.name} of ${po(s.po).job}`, d:`Requested ${fmt(s.bookingRequested)}, nothing back after ${diffDays(TODAY, s.bookingRequested)} days. Planned to sail ${fmt(milestones(s)[2].date)}.`, link:'po-'+s.po.slice(3), btn:'Approve: ask the forwarder', toast:`Asked ${s.forwarder ? esc(vendor(s.forwarder).name) : 'the forwarder'} where the booking for ${s.name} stands.` }));
+  customers.filter(statusDue).forEach(c => { const pc = contactsOf(c.id).find(x => x.primary), n = openShipsOf(c.id).length; a.push({ id:'status-'+c.id, k:'info', t:`Send ${c.name} their open order status`, d:`${n} open shipment${n === 1 ? '' : 's'}. ${c.statusSent ? `Last sent ${fmt(c.statusSent)}` : 'Never sent'}; it goes every ${C.standingEmailDays} days and asks ${pc ? pc.name.split(' ')[0] : 'the contact'} to confirm the need-by dates.`, link:'customer-'+c.id, btn:'Approve: send', fn:`act.statusSend('${c.id}')` }); });
+  shipments.filter(s => s.appt && s.appt.status === 'unreachable' && !s.appt.notified && !isDelivered(s)).forEach(s => { const cr = vendor(s.appt.carrier), who = s.delivery.name.split(',')[0]; a.push({ id:'unreach-'+s.id, k:'crit', t:`${cr.name} cannot reach ${who} to deliver ${s.name} of ${po(s.po).job}`, d:`${s.appt.attempts.length} calls since ${fmt(s.appt.attempts[0])}, no answer. ${who} needs ${s.appt.notice} hours' notice and est. delivery is ${fmt(eta(s))}. A truck sent without an appointment comes back as a redelivery charge.`, link:'po-'+s.po.slice(3), btn:'Approve: notify customer', fn:`act.notifyUnreachable('${s.id}')` }); });
   return a.filter(x => !done.has(x.id));
 }
 
@@ -584,14 +594,14 @@ document.addEventListener('click', e => {
    ride along in sessionStorage and are merged back in by id. "Reset sample data" in the user menu clears them. */
 const STATE_KEY = 'se-state';
 let resetting = false;
-const stores = () => ({ customers, vendors, contacts, pos, shipments, changes, intake, threads, C, LINES, T, navOpen, done:[...done], openShips:[...openShips], ME, portalCustomer, lastChatTab });
+const stores = () => ({ customers, vendors, contacts, pos, shipments, changes, intake, threads, C, LINES, T, navOpen, draftStats, done:[...done], openShips:[...openShips], ME, portalCustomer, lastChatTab });
 function saveState() { if (resetting) return; try { sessionStorage.setItem(STATE_KEY, JSON.stringify(stores())); } catch (e) {} }
 function hydrate() {
   let s = null; try { s = JSON.parse(sessionStorage.getItem(STATE_KEY)); } catch (e) {} if (!s) return;
   const merge = (target, saved) => { if (!saved) return; const byId = new Map(target.map(x => [x.id, x])); target.splice(0, target.length, ...saved.map(x => byId.has(x.id) ? Object.assign(byId.get(x.id), x) : x)); };
   [[customers, s.customers], [vendors, s.vendors], [contacts, s.contacts], [pos, s.pos], [shipments, s.shipments], [changes, s.changes], [intake, s.intake], [threads, s.threads]].forEach(([t, v]) => merge(t, v));
   pos.filter(p => !Object.getOwnPropertyDescriptor(p, 'lane')).forEach(defineLane);
-  [[C, s.C], [LINES, s.LINES], [T, s.T], [navOpen, s.navOpen]].forEach(([t, v]) => v && Object.assign(t, v));
+  [[C, s.C], [LINES, s.LINES], [T, s.T], [navOpen, s.navOpen], [draftStats, s.draftStats]].forEach(([t, v]) => v && Object.assign(t, v));
   (s.done || []).forEach(x => done.add(x)); if (s.openShips) { openShips.clear(); s.openShips.forEach(x => openShips.add(x)); }
   if (s.ME) ME = s.ME; if (s.portalCustomer) portalCustomer = s.portalCustomer; if (s.lastChatTab) lastChatTab = s.lastChatTab;
 }
@@ -634,7 +644,7 @@ const act = {
         log(`${c.id} approved. Milestones recalculated. ${who} notified.`);
         toast(`<b>${c.id} approved.</b> Milestones recalculated and ${esc(who)} was notified.`);
       } else if (c.id === 'CO-2034') { C.production = 52; toast('<b>CO-2034 approved.</b> Production constraint set to 52 days. Every Daizhin place-by date moved 7 days earlier.'); }
-      else if (c.id === 'CO-2035') { contact('ct1').primary = false; contact('ct2').primary = true; toast('<b>CO-2035 approved.</b> Marcus Hale is now the primary ILG contact. Lakeshore standing email resent.'); }
+      else if (c.id === 'CO-2035') { contact('ct1').primary = false; contact('ct2').primary = true; toast('<b>CO-2035 approved.</b> Marcus Hale is now the primary ILG contact. Lakeshore open order status resent.'); }
       else { if (c.setDest) shipsOf(c.po).filter(s => /missing/i.test(s.dest)).forEach(s => { s.dest = c.setDest; }); log(`${c.id} approved. ${who} notified.`); toast(`<b>${c.id} approved.</b> ${esc(who)} was notified.`); }
     } else if (status === 'rejected') {
       log(`${c.id} rejected. ${who} notified with reason.`);
@@ -693,13 +703,13 @@ const act = {
   reply(tid, fromDraft) {
     const t = thread(tid); const el = document.getElementById('reply-' + tid); const body = (el?.value || '').trim();
     if (!body) { toast('Write a reply first.'); el?.focus(); return; }
-    const edited = fromDraft && body !== t.draft.trim();
+    const edited = fromDraft && body !== t.draft.trim(); if (fromDraft) draftStats[edited ? 'edited' : 'sentAsIs']++;
     t.msgs.push(['us', '2026-10-26 ' + new Date().toTimeString().slice(0, 5), body, null, fromDraft ? `${TEAM[t.assignee] || 'Surface Edge'} · drafted by system${edited ? ', edited' : ''}` : null]);
-    t.status = 'awaiting'; t.unread = false; t.draftDismissed = true;
+    t.status = 'awaiting'; t.unread = false; t.draftShown = false;
     toast(`<b>Sent.</b> Emailed to ${t.contact ? esc(contact(t.contact).name) : 'the sender'} and the thread moved to Awaiting reply.`); render();
   },
-  sendDraft(tid) { const t = thread(tid); t.msgs.push(['us', '2026-10-26 ' + new Date().toTimeString().slice(0, 5), t.draft, null, `${TEAM[t.assignee] || 'Surface Edge'} · drafted by system`]); t.status = 'awaiting'; t.unread = false; t.draftDismissed = true; toast(`<b>Sent.</b> Draft emailed to ${t.contact ? esc(contact(t.contact).name) : 'the sender'} as written.`); render(); },
-  discardDraft(tid) { thread(tid).draftDismissed = true; render(); },
+  draftReply(tid) { const t = thread(tid); draftStats.requested++; if (!t.draft) { toast('<b>Prototype.</b> A draft from the order, the change request and this thread would appear here.'); return; } t.draftShown = true; t.draftDismissed = false; render(); setTimeout(() => document.getElementById('reply-' + tid)?.focus(), 0); },
+  discardDraft(tid) { thread(tid).draftDismissed = true; draftStats.discarded++; render(); },
   theme() { themePref = { auto:'light', light:'dark', dark:'auto' }[themePref]; try { localStorage.setItem('se-theme', themePref); } catch (e) {} applyTheme(); renderMain(); toast(`<b>${THEME_UI[themePref][1].replace('Theme: ', '')}</b> theme.`); },
   toggleShip(id) { openShips.has(id) ? openShips.delete(id) : openShips.add(id); renderMain(); },
   toggleDesc() { openDesc.has(route) ? openDesc.delete(route) : openDesc.add(route); renderMain(); },
@@ -730,12 +740,11 @@ const act = {
     const dlWas = s.delivery || { name:'', phone:'', site:'Job site', dock:false, forklift:false, rules:[] };
     if (JSON.stringify(dl) !== JSON.stringify(dlWas)) { changed.push(dl.name ? `delivery contact → ${dl.name}` : 'delivery details'); s.delivery = dl.name || dl.phone ? dl : null; }
     const pl = v('placed') || null; if (pl !== s.placedAt) { changed.push(`placed ${s.placedAt ? fmt(s.placedAt) : 'not placed'} → ${pl ? fmt(pl) : 'not placed'}`); s.placedAt = pl; if (pl && s.stage < 0) s.stage = 0; if (!pl) { s.stage = -1; s.actual = {}; } }
-    Object.keys(STEP_NAMES).forEach(k => { const el = document.getElementById('f-step-' + k); if (!el) return; const val = el.value || null; s.steps = s.steps || {}; if (val !== (s.steps[k] || null)) { changed.push(`${STEP_NAMES[k].toLowerCase()} ${val ? fmt(val) : 'cleared'}`); s.steps[k] = val; } });
+    Object.keys(STEP_NAMES).forEach(k => { const el = document.getElementById('f-step-' + k); if (!el) return; const val = el.value || null; s.steps = s.steps || {}; if (val !== (s.steps[k] || null)) { changed.push(`${STEP_NAMES[k].toLowerCase()} ${val ? fmt(val) : 'cleared'}`); s.steps[k] = val; (s.stepsByHand = s.stepsByHand || {})[k] = true; } });
     if (!changed.length) { toast('No changes to save.'); return; }
     p.activity.push([iso(TODAY), `${s.name}: ${changed.join('; ')}. Milestones recalculated.`]);
     openShips.add(s.id); toast(`<b>Saved.</b> ${changed.length} change${changed.length > 1 ? 's' : ''} to ${esc(s.name)}; milestones recalculated.`); go('po-' + p.id.slice(3));
   },
-  restoreDraft(tid) { thread(tid).draftDismissed = false; render(); },
   threadStatus(tid, status) { const t = thread(tid); t.status = status; t.unread = false; toast(status === 'closed' ? '<b>Closed.</b> A new message from them reopens it.' : '<b>Reopened.</b>'); render(); },
   assign(tid, who) { const t = thread(tid); t.assignee = who || null; toast(`<b>Assigned</b> to ${TEAM[who] || 'no one'}.`); render(); },
 };
@@ -887,11 +896,16 @@ const proformaWait = s => s.placedAt && s.steps && s.steps.proforma ? Math.max(0
 const legsFromPlacing = durations;
 durations = s => { const dur = legsFromPlacing(s); if (s.type === 'container') dur[1] = proformaWait(s) + dur[1]; return dur; };
 
+/* Dates in the sample history were recorded from vendor emails and portals, not typed. The icon names the source, so the team can
+   see what the system picks up on its own and where a person still has to click. */
+const AUTO_SOURCE = { container:{ 1:"the mill's production report", 2:"the forwarder's departure notice", 3:"the forwarder's arrival notice", 4:"the broker's release notice", 5:"the carrier's proof of delivery" }, ltl:{ 1:"the warehouse's pick confirmation", 2:"the carrier's pickup scan", 3:"the carrier's proof of delivery" } };
+const STEP_SOURCE = { proforma:"the mill's proforma email", arrivalNotice:"the forwarder's arrival notice", pickedUp:"the carrier's pickup confirmation" };
+const autoIcon = src => src ? `<i class="bi bi-robot ms-1 text-body-secondary" title="Recorded automatically from ${esc(src)}"></i>` : '';
 function msList(s, hideDates) {
   const m = milestones(s), st = isPortal() ? [] : steps(s);
-  const stepLi = x => `<li class="step ${x.recorded || x.passed ? 'done' : 'future'} ${x.due ? 'late' : ''}"><span class="k"></span><span class="n">${esc(x.name)}</span><span class="dt ${x.due ? 'text-danger' : ''}">${x.recorded ? fmt(x.date) : x.passed ? 'not recorded' : x.due ? `due ${fmt(x.date)}, not recorded` : 'est. ' + fmt(x.date)}</span></li>`;
+  const stepLi = x => `<li class="step ${x.recorded || x.passed ? 'done' : 'future'} ${x.due ? 'late' : ''}"><span class="k"></span><span class="n">${esc(x.name)}${x.recorded && !(s.stepsByHand || {})[x.key] ? autoIcon(STEP_SOURCE[x.key]) : ''}</span><span class="dt ${x.due ? 'text-danger' : ''}">${x.recorded ? fmt(x.date) : x.passed ? 'not recorded' : x.due ? `due ${fmt(x.date)}, not recorded` : 'est. ' + fmt(x.date)}</span></li>`;
   return `<ul class="ms">${m.map(x => { const last = x.i === m.length - 1; const late = !x.done && s.needBy && last && diffDays(x.date, s.needBy) > 0; const hide = hideDates && !x.done && !last;
-    return `<li class="${x.done?'done':''} ${x.now?'now':''} ${(!x.done && !x.now)?'future':''} ${late || x.overdue ?'late':''}"><span class="k"></span><span class="n">${esc(x.name)}</span><span class="dt ${x.overdue && !hide ? 'text-danger' : ''}">${hide ? '—' : x.overdue ? `due ${fmt(x.due)}, not recorded` : (x.actual ? '' : (s.placedAt || s.needBy ? 'est. ' : '')) + fmt(x.date)}</span></li>` + st.filter(y => y.after === x.i).map(stepLi).join(''); }).join('')}</ul>`;
+    return `<li class="${x.done?'done':''} ${x.now?'now':''} ${(!x.done && !x.now)?'future':''} ${late || x.overdue ?'late':''}"><span class="k"></span><span class="n">${esc(x.name)}${x.actual && x.i > 0 && !s.via && !isPortal() ? autoIcon(AUTO_SOURCE[s.type][x.i]) : ''}</span><span class="dt ${x.overdue && !hide ? 'text-danger' : ''}">${hide ? '—' : x.overdue ? `due ${fmt(x.due)}, not recorded` : (x.actual ? '' : (s.placedAt || s.needBy ? 'est. ' : '')) + fmt(x.date)}</span></li>` + st.filter(y => y.after === x.i).map(stepLi).join(''); }).join('')}</ul>`;
 }
 
 const bookingNote = s => `<div class="item-sub mt-2"><i class="bi bi-calendar-check me-1"></i>Booked <span class="mono">${esc(s.booking.ref)}</span>, confirmed ${fmt(s.booking.confirmed)}${s.booking.vessel ? ` · ${esc(s.booking.vessel)}` : ''}${s.booking.container ? ` · container <span class="mono">${esc(s.booking.container)}</span>` : ''} · ETD ${fmt(s.booking.etd)} · ETA ${esc(s.port)} ${fmt(s.booking.eta)}</div>`;
@@ -913,7 +927,7 @@ function shipCard(s, opts = {}) {
         <div class="detail-field full-width"><div class="detail-label">Route</div><div class="detail-value">${esc(s.origin)}${s.port ? ` → ${esc(s.port)} port` : ''} → ${esc(s.dest)}</div>${opts.office ? `<div class="item-sub mt-1">${[s.originCo, s.forwarder, s.via, s.carrier].filter(Boolean).map(v => `<a href="#vendor-${v}" class="text-decoration-none">${esc(vendor(v).name)}</a> <span class="text-body-secondary">(${esc(vendorRoleOn(v, s))})</span>`).join(' · ')}</div>` : ''}</div>
         ${opts.office && refList(s).length ? `<div class="detail-field full-width"><div class="detail-label">References</div><div class="tag-list mt-1">${refList(s).map(([k, val]) => `<span class="tag">${k}<span class="mono ms-1">${esc(val)}</span></span>`).join('')}</div></div>` : ''}${opts.office ? `<div class="detail-field full-width"><div class="detail-label">Delivery</div>${deliveryHtml(s)}</div>` : ''}
         ${s.placedAt ? `<div class="detail-field"><div class="detail-label">Placed</div><div class="detail-value mono">${fmtLong(s.placedAt)}</div></div>` : `<div class="detail-field"><div class="detail-label">Place by</div><div class="detail-value mono">${pb ? fmtLong(pb) + ` <span class="text-body-secondary">(${rel(pb)})</span>` : '—'}</div></div>`}
-        ${shipByDate(s) && !s.actual[2] ? `<div class="detail-field"><div class="detail-label">Ship by</div><div class="detail-value mono">${fmtLong(shipByDate(s))}</div><div class="item-sub mt-1">${s.via ? 'Need-by less the legs through the warehouse' : `Need-by minus ${shipByDays(s)} days, the ${WEST_COAST.includes(s.port) ? 'West Coast' : 'Gulf and East Coast'} rule`}. ${holdDays(s) ? 'Placed early; the mill times production to this date' : 'Goes on the factory PO; the mill produces to it'}.${!s.via && afterSailDays(s) > shipByDays(s) ? ` The legs from ${esc(s.port)} take ${afterSailDays(s)} days, ${afterSailDays(s) - shipByDays(s)} more than the rule allows.` : ''}</div></div>` : ''}
+        ${shipByDate(s) && !s.actual[2] ? `<div class="detail-field"><div class="detail-label">Ship by (departs origin port)</div><div class="detail-value mono">${fmtLong(shipByDate(s))}</div><div class="item-sub mt-1">${s.via ? 'Need-by less the legs through the warehouse' : `Need-by minus ${shipByDays(s)} days, the ${WEST_COAST.includes(s.port) ? 'West Coast' : 'Gulf and East Coast'} rule`}. Goes on the factory PO; the mill finishes production by ${fmt(productionBy(s))}${holdDays(s) ? ' and holds the container until it sails' : ''}.${!s.via && afterSailDays(s) > shipByDays(s) ? ` The legs from ${esc(s.port)} take ${afterSailDays(s)} days, ${afterSailDays(s) - shipByDays(s)} more than the rule allows.` : ''}</div></div>` : ''}
         <div class="detail-field"><div class="detail-label">Est. delivery</div><div class="detail-value mono">${s.placedAt || s.needBy ? fmtLong(eta(s)) : '—'}</div></div>
         ${s.type === 'container' && s.placedAt && s.stage < 2 ? `<div class="detail-field full-width"><div class="detail-label">${s.bookingRequested ? 'Booking requested' : 'Request booking by'}</div><div class="detail-value mono ${bookingLate(s) || bookingStuck(s) ? 'text-danger' : ''}">${s.bookingRequested ? `${fmtLong(s.bookingRequested)} <span class="fw-normal">(${s.booking ? 'confirmed' : bookingStuck(s) ? `nothing back after ${diffDays(TODAY, s.bookingRequested)} days` : 'waiting on the forwarder'})</span>` : `${fmtLong(bookingBy(s))}${bookingLate(s) ? ` <span class="fw-normal">(${rel(bookingBy(s))}, no request recorded)</span>` : ''}${opts.office && !s.booking ? ` <button class="btn btn-link btn-sm p-0 ms-1 align-baseline" onclick="act.requestBooking('${s.id}')">Mark requested</button>` : ''}`}</div><div class="item-sub mt-1">${s.bookingRequested ? 'Planned to sail' : `${C.bookingLead} days before the planned sailing,`} ${fmt(milestones(s)[2].date)}</div></div>` : ''}
       </div>
@@ -981,11 +995,11 @@ Object.assign(T, { todoFilter:ME, todoSort:'urgency', feedFilter:'all' });
 const pillsUl = (items, active) => tabsUl(items, active).replace('<ul class="nav nav-tabs">', '<ul class="nav nav-pills sub-nav">');
 
 /* To do: every proposed action, typed and owned, most urgent first. */
-const TODO_TYPES = [['decisions','Decisions','Change requests waiting on a decision.'],['place','Place orders','Shipments due to be placed with the factory or warehouse.'],['paperwork','Paperwork','Acknowledgements, reminders for missing information, and departure notices.'],['replies','Replies','Replies drafted from the thread and the order, ready to send.'],['exceptions','Exceptions','Shipments that are late, overdue at a milestone, or missing a booking.']];
+const TODO_TYPES = [['decisions','Decisions','Change requests waiting on a decision.'],['place','Place orders','Shipments due to be placed with the factory or warehouse.'],['paperwork','Paperwork','Acknowledgements, reminders for missing information, and departure notices.'],['replies','Replies','Threads where the other party spoke last. Draft a reply is one click away in each.'],['exceptions','Exceptions','Shipments that are late, overdue at a milestone, or missing a booking.']];
 function todoType(a) {
   if (/^CO-/.test(a.id)) return 'decisions';
   if (/^place-/.test(a.id)) return 'place';
-  if (/^(remind|ack|acksign|stop)-/.test(a.id)) return 'paperwork';
+  if (/^(remind|ack|acksign|stop|status)-/.test(a.id)) return 'paperwork';
   if (/^draft-/.test(a.id)) return 'replies';
   return 'exceptions';
 }
@@ -1469,7 +1483,7 @@ function viewCustomers(tab) {
   if (T.custSort === 'changes') rows.sort((a, b) => b.cos90 - a.cos90);
   const tools = searchBox('Search customers…') + filterTool('custFilter', [['all','All reps'], ...[...new Set(customers.map(c => c.rep))].map(r => [r, 'Rep: ' + r])]) + sortTool('custSort', [['default','Default order'],['name','Name A–Z'],['completeness','PO completeness, lowest first'],['changes','Most change requests']]);
   const tabs = tabsUl(CUST_TABS.map(t => [t[0], t[1], t[0] === 'customers' ? customers.length : t[0] === 'customers-reps' ? reps().length : customers.filter(c => custStatus(c) === t[0].slice(10)).length, t[0] === 'customers-onboarding' ? 'warning' : t[0] === 'customers-active' ? 'success' : 'secondary']), tab ? 'customers-' + tab : 'customers');
-  const desc = { active:'Onboarded and holding at least one open order.', onboarding:'First order received; account package, credit, preliminary notice, or tax status still open.', inactive:'Onboarded with no open orders. Standing emails pause until the next PO.' }[tab] || 'Who we sell to, what they owe us, and how clean their orders arrive. Matched against the customer list export until the new system lands in February.';
+  const desc = { active:'Onboarded and holding at least one open order.', onboarding:'First order received; account package, credit, preliminary notice, or tax status still open.', inactive:'Onboarded with no open orders. Open order status emails pause until the next PO.' }[tab] || 'Who we sell to, what they owe us, and how clean their orders arrive. Matched against the customer list export until the new system lands in February.';
   if (tab === 'reps') return pageHeader('Customers', 'Companies that buy from Surface Edge.') + pageNav(tabs, '') + tabDesc('Each salesperson\'s accounts and the orders they handled: how complete POs arrive, how often they change, and what is still missing.') + repsTable();
   return pageHeader('Customers', 'Companies that buy from Surface Edge.', `<button class="btn btn-primary btn-sm" onclick="act.stub('<b>Prototype.</b> New customer form would open here.')"><i class="bi bi-plus-lg me-1"></i> New customer</button>`) + pageNav(tabs, tools) + tabDesc(desc) +
   `<div class="data-table-wrapper"><div class="table-responsive"><table class="table table-hover"><thead><tr><th>Customer</th><th>Contact</th><th class="num">Active</th><th class="num">Queued</th><th class="num">Open changes</th><th class="num">PO completeness</th><th class="num">Changes / 90d</th><th>Status</th></tr></thead><tbody>
@@ -1484,38 +1498,92 @@ const contactRow = (ct, opts = {}) => actionItem(ct.status === 'left' ? 'crit' :
   ct.status === 'active' && !ct.primary ? `<button class="btn btn-sm btn-outline-secondary" onclick="act.setPrimary('${ct.id}')">Make primary</button>` : '');
 const companyChanges = id => changes.filter(c => c.target === id || (c.po && po(c.po).customer === id) || (c.ship && vendorRoleOn(id, ship(c.ship))));
 
-/* Open-order export per customer, from the scope page. One row per shipment not yet delivered. The team copy has every
-   reference; the customer copy drops the internal ones (Navigator order, factory PO, our status notes) so it can be sent as is. */
-let exportOpen = null;   // the customer whose export preview is open
-const EXPORT_COLS = [
-  ['Order', s => s.po, 'team'], ['Job', s => po(s.po).job], ['Job #', s => po(s.po).jobNo || ''], ['Customer PO', s => s.custPO || po(s.po).custPO || ''], ['Sidemark', s => s.sidemark || ''],
-  ['Shipment', s => s.name], ['Kind', s => s.type === 'container' ? 'Ocean container' : 'LTL / pallet'], ['Sq ft', s => s.sqft], ['Need-by', s => s.asap ? 'ASAP' : s.needBy ? fmtLong(s.needBy) : 'To be confirmed'],
-  ['Stage', s => stageName(s)], ['Status', s => health(s).t, 'team'], ['Mill ships by', s => shipByDate(s) && !s.actual[2] ? fmtLong(shipByDate(s)) : '', 'team'],
-  ['Est. delivery', s => s.placedAt || s.needBy ? fmtLong(eta(s)) : ''], ['Navigator order', s => s.erpOrder || '', 'team'], ['Factory PO', s => s.factoryPO || '', 'team'],
-  ['Booking', s => (s.booking && s.booking.ref) || ''], ['Container', s => (s.booking && s.booking.container) || ''],
+/* Open order status per customer: Annalisa's report, the format the team and customers already know. One row per shipment not
+   yet delivered, grouped by salesperson, with a notes log on every line that the system writes from the order record. The team copy
+   adds internal references at the end. It goes to the primary contact on the cadence in Constraints and asks them to confirm the
+   need-by dates; a reply that moves a date becomes a change request. */
+let exportOpen = null;   // the customer whose report preview is open
+const STATUS_SENT = { ilg:'2026-10-20', tcc:'2026-10-21', northwind:'2026-10-13' };
+customers.forEach(c => { c.statusSent = STATUS_SENT[c.id] || null; });
+const fmtUS = dt => { const x = d(dt); return `${x.getMonth() + 1}/${x.getDate()}/${x.getFullYear()}`; };
+const needUS = s => s.asap ? 'ASAP' : s.needBy ? fmtUS(s.needBy) : 'TBD';
+const lineOf = s => linesOf(po(s.po))[0];
+const productOf = s => { const l = lineOf(s); return l.supplied ? `${l.product} (ship as ${l.supplied})` : l.product; };
+const msUS = (s, i) => { if (s.type !== 'container' || !(s.placedAt || s.needBy)) return ''; const m = milestones(s)[i]; return m.actual || bookedDate(s, i) ? fmtUS(m.date) : `est. ${fmtUS(m.date)}`; };
+const atWarehouse = s => !!s.via && !!s.placedAt && s.stage === milestones(s).length - 2;
+const whoSaid = c => c.by.split('·')[1].trim().replace(/\s*\(.*\)$/, '');
+function statusNotes(s) {
+  const n = [];
+  if (s.asap) n.push('Need by ASAP.'); else if (s.needAfter) n.push(`Need by ${afterText(s)}${s.needBy ? ` (${fmtUS(s.needBy)})` : ''}.`); else n.push(s.requested || s.needBy ? `Need by ${fmtUS(s.requested || s.needBy)}.` : 'Need by date not given yet.');
+  changes.filter(c => c.ship === s.id && /need-by|pull in|push/i.test(c.type) && c.status !== 'rejected').sort((a, b) => a.received > b.received ? 1 : -1)
+    .forEach(c => n.push(`${fmtUS(c.received)} ${whoSaid(c)} ${c.status === 'pending' ? 'asked to move need by date to' : 'revised need by date to'} ${c.to}${c.status === 'pending' ? ' (under review)' : ''}.`));
+  if (s.hold) n.push('Held in queue.');
+  if (s.placedAt) n.push(`Placed with ${s.origin.split(',')[0]} ${fmtUS(s.placedAt)}.`);
+  if (s.type === 'container') {
+    if (s.booking) n.push(`Booked to depart ${fmtUS(s.booking.etd)} for Port of ${s.port}.`); else if (s.bookingRequested) n.push(`Booking requested ${fmtUS(s.bookingRequested)}.`);
+    if (s.actual[2]) n.push('Departed.'); if (s.steps && s.steps.arrivalNotice) n.push('Arrival Notice.'); if (s.actual[3]) n.push('Arrived.'); if (s.actual[4]) n.push('Cleared and released.'); if (s.steps && s.steps.pickedUp) n.push(`Picked up ${fmtUS(s.steps.pickedUp)}.`);
+  } else { if (s.actual[1]) n.push('Picked.'); if (s.actual[2]) n.push('Shipped.'); }
+  if (atWarehouse(s)) n.push(`Available at ${vendor(s.via).name}.`);
+  if (s.appt) n.push(s.appt.status === 'unreachable' ? `${vendor(s.appt.carrier).name} unable to reach ${s.delivery.name.split(',')[0]} for the delivery appointment (${s.appt.attempts.length} calls)${s.appt.notified ? `; customer notified ${fmtUS(s.appt.notified)}` : ''}.` : `Delivery appointment ${fmtUS(s.appt.for)}.`);
+  return n.join(' ');
+}
+const STATUS_COLS = [
+  ['Customer', s => { const p = po(s.po), c = cust(p.customer), pc = contactsOf(c.id).find(x => x.primary); return [c.name, p.rep, pc && pc.name.split(' ')[0], s.delivery && s.delivery.name.split(/,| /)[0]].filter(Boolean).join(' / '); }],
+  ['Job #', s => po(s.po).jobNo || ''], ['Job Name', s => `${po(s.po).job} - ${s.name}`], ['PO #', s => s.custPO || po(s.po).custPO || ''], ['Order #', s => s.erpOrder || ''],
+  ['Product (include spec)', productOf], ['Quantity on PO', s => s.sqft], ['Cartons', s => { const k = packOf(lineOf(s).supplied || lineOf(s).product, s.sqft); return k ? k.cartons : ''; }],
+  ['Destination', s => s.type === 'ltl' ? `${s.dest} ship from ${s.origin}` : s.dest], ['Order placement date', s => fmtUS(po(s.po).received)],
+  ['PO need by date', s => s.requested ? fmtUS(s.requested) : needUS(s)], ['Need by date', needUS],
+  ['ETD', s => msUS(s, 2)], ['ETA to USA port', s => msUS(s, 3)], ['ETA to final destination', s => atWarehouse(s) ? 'Available' : s.placedAt || s.needBy ? `est. ${fmtUS(eta(s))}` : ''],
+  ['Date delivered', s => isDelivered(s) ? fmtUS(eta(s)) : ''], ['Notes', statusNotes],
+  ['Order', s => s.po, 'team'], ['Status', s => health(s).t, 'team'], ['Sails by', s => shipByDate(s) && !s.actual[2] ? fmtUS(shipByDate(s)) : '', 'team'], ['Factory PO', s => s.factoryPO || '', 'team'],
+  ['Booking', s => (s.booking && s.booking.ref) || '', 'team'], ['Container', s => (s.booking && s.booking.container) || '', 'team'],
 ];
 const openShipsOf = custId => pos.filter(p => p.customer === custId).flatMap(p => shipsOf(p.id)).filter(s => !isDelivered(s));
-const exportCols = who => EXPORT_COLS.filter(col => who === 'team' || col[2] !== 'team');
+const statusCols = who => STATUS_COLS.filter(col => who === 'team' || col[2] !== 'team');
+const statusRows = custId => [...openShipsOf(custId)].sort((a, b) => po(a.po).rep.localeCompare(po(b.po).rep) || (a.needBy || '9').localeCompare(b.needBy || '9'));
+const statusFile = (c, who) => `${c.name} Open Order Status ${fmtUS(TODAY).replace(/\//g, '.')}${who === 'team' ? ' (team)' : ''}.csv`.replace(/[\\/:*?"<>|]/g, '');
+const statusDue = c => c.onboarded && openShipsOf(c.id).length && (!c.statusSent || diffDays(TODAY, c.statusSent) >= C.standingEmailDays);
 const csvCell = v => { const t = String(v ?? ''); return /[",\n]/.test(t) ? `"${t.replace(/"/g, '""')}"` : t; };
-function exportCsv(custId, who) { const cols = exportCols(who); return [cols.map(col => col[0]), ...openShipsOf(custId).map(s => cols.map(col => col[1](s)))].map(r => r.map(csvCell).join(',')).join('\n'); }
+function statusCsv(custId, who) { const cols = statusCols(who); return [cols.map(col => col[0]), ...statusRows(custId).map(s => cols.map(col => col[1](s)))].map(r => r.map(csvCell).join(',')).join('\n'); }
 function exportModal(c) {
   if (exportOpen !== c.id) return '';
-  const rows = openShipsOf(c.id), cols = exportCols('team');
+  const rows = statusRows(c.id), cols = statusCols('team'), pc = contactsOf(c.id).find(x => x.primary), reps = [...new Set(rows.map(s => po(s.po).rep))];
+  const num = col => col[0] === 'Quantity on PO' || col[0] === 'Cartons';
+  const cell = (col, s) => `<td class="${num(col) ? 'num mono' : ''}" style="${col[0] === 'Notes' ? 'min-width:30rem;white-space:normal' : 'white-space:nowrap'}">${esc(num(col) && col[1](s) !== '' ? Number(col[1](s)).toLocaleString() : col[1](s))}</td>`;
+  const body = rows.length ? reps.map(r => `${reps.length > 1 ? `<tr><th colspan="${cols.length}" class="bg-body-tertiary">Rep · ${esc(r)}</th></tr>` : ''}${rows.filter(s => po(s.po).rep === r).map(s => `<tr>${cols.map(col => cell(col, s)).join('')}</tr>`).join('')}`).join('') : `<tr><td colspan="${cols.length}" class="text-center text-body-secondary py-4">No open shipments.</td></tr>`;
   return `<div style="position:fixed;inset:0;background:rgba(0,0,0,.55);z-index:1080;display:flex;align-items:flex-start;justify-content:center;padding:40px 16px;overflow:auto;text-align:left" onclick="if(event.target===this)act.exportPreview('${c.id}')"><div class="detail-card" style="max-width:1440px;width:100%;margin:0">
-    <div class="detail-card-header"><h3>Open orders · ${esc(c.name)}</h3><span class="card-note">${rows.length} shipment${rows.length === 1 ? '' : 's'} not yet delivered · ${fmtLong(TODAY)}</span></div>
-    <div class="detail-card-body flush"><div class="table-responsive"><table class="table table-sm mb-0" style="font-size:12px"><thead><tr>${cols.map(col => `<th class="${col[0] === 'Sq ft' ? 'num' : ''}">${esc(col[0])}${col[2] === 'team' ? ' <span class="text-body-secondary fw-normal" title="Left out of the customer copy">*</span>' : ''}</th>`).join('')}</tr></thead><tbody>${rows.map(s => `<tr>${cols.map(col => `<td class="${col[0] === 'Sq ft' ? 'num mono' : ''}" style="white-space:nowrap">${esc(col[0] === 'Sq ft' ? s.sqft.toLocaleString() : col[1](s))}</td>`).join('')}</tr>`).join('') || `<tr><td colspan="${cols.length}" class="empty">No open shipments.</td></tr>`}</tbody></table></div></div>
-    <div class="detail-card-footer d-flex justify-content-between align-items-center gap-2 flex-wrap"><span>* Team copy only. The customer copy leaves these out.</span><div class="d-flex gap-2 flex-wrap"><button class="btn btn-sm btn-outline-secondary" onclick="act.exportPreview('${c.id}')">Close</button><button class="btn btn-sm btn-outline-secondary" onclick="act.exportDownload('${c.id}', 'team')"><i class="bi bi-download me-1"></i>Team copy (CSV)</button><button class="btn btn-sm btn-primary" onclick="act.exportDownload('${c.id}', 'customer')"><i class="bi bi-download me-1"></i>Customer copy (CSV)</button></div></div>
+    <div class="detail-card-header"><h3>Open order status · ${esc(c.name)}</h3><span class="card-note">${rows.length} shipment${rows.length === 1 ? '' : 's'} not yet delivered · as of ${fmtLong(TODAY)} · ${c.statusSent ? `last sent ${fmt(c.statusSent)}` : 'never sent'} · every ${C.standingEmailDays} days</span></div>
+    <div class="detail-card-body flush"><div class="table-responsive"><table class="table table-sm mb-0" style="font-size:12px"><thead><tr>${cols.map(col => `<th class="${num(col) ? 'num' : ''}">${esc(col[0])}${col[2] === 'team' ? ' <span class="text-body-secondary fw-normal" title="Left out of the customer copy">*</span>' : ''}</th>`).join('')}</tr></thead><tbody>${body}</tbody></table></div></div>
+    <div class="detail-card-footer d-flex justify-content-between align-items-center gap-2 flex-wrap"><span>Annalisa's format. * Team copy only. The notes come from the order record; nobody types them.</span><div class="d-flex gap-2 flex-wrap"><button class="btn btn-sm btn-outline-secondary" onclick="act.exportPreview('${c.id}')">Close</button><button class="btn btn-sm btn-outline-secondary" onclick="act.exportDownload('${c.id}', 'team')"><i class="bi bi-download me-1"></i>Team copy (CSV)</button><button class="btn btn-sm btn-outline-secondary" onclick="act.exportDownload('${c.id}', 'customer')"><i class="bi bi-download me-1"></i>Customer copy (CSV)</button><button class="btn btn-sm btn-primary" onclick="act.statusSend('${c.id}')" ${pc && rows.length ? '' : 'disabled'}><i class="bi bi-send me-1"></i>Email to ${pc ? esc(pc.name.split(' ')[0]) : 'contact'}</button></div></div>
   </div></div>`;
 }
+const newThreadId = () => 'T' + (Math.max(...threads.map(t => Number(t.id.slice(1)))) + 1);
 Object.assign(act, {
   exportPreview(custId) { exportOpen = exportOpen === custId ? null : custId; render(); },
   exportDownload(custId, who) {
-    const c = cust(custId), name = `${c.name} open orders ${iso(TODAY)}${who === 'team' ? ' (team)' : ''}.csv`.replace(/[\\/:*?"<>|]/g, '');
-    const a = document.createElement('a'); a.href = URL.createObjectURL(new Blob([exportCsv(custId, who)], { type:'text/csv' })); a.download = name; document.body.appendChild(a); a.click(); a.remove(); setTimeout(() => URL.revokeObjectURL(a.href), 1000);
+    const name = statusFile(cust(custId), who);
+    const a = document.createElement('a'); a.href = URL.createObjectURL(new Blob([statusCsv(custId, who)], { type:'text/csv' })); a.download = name; document.body.appendChild(a); a.click(); a.remove(); setTimeout(() => URL.revokeObjectURL(a.href), 1000);
     toast(`<b>Downloaded</b> ${esc(name)}: ${openShipsOf(custId).length} open shipments.`);
   },
+  statusSend(custId) {
+    const c = cust(custId), pc = contactsOf(c.id).find(x => x.primary), rows = statusRows(c.id), orders = [...new Set(rows.map(s => s.po))], stamp = nowStamp();
+    if (!pc) { toast('No primary contact to send to.'); return; }
+    const subject = `${c.name} open order status ${fmtUS(TODAY)}`;
+    const body = `Hi ${pc.name.split(' ')[0]},\n\nAttached is your open order status as of ${fmtLong(TODAY)}: ${rows.length} shipment${rows.length === 1 ? '' : 's'} across ${orders.length} order${orders.length === 1 ? '' : 's'}.\n\nPlease look over the need by dates and reply with anything that has moved. Whatever you send back becomes a change request on the order, and the notes column carries forward to next week.\n\n${TEAM[ME]}`;
+    threads.unshift({ id:newThreadId(), subject, company:c.id, contact:pc.id, assignee:ME, status:'awaiting', unread:false, custSeen:false, msgs:[['us', stamp, body, [statusFile(c, 'customer')], `${TEAM[ME]} · open order status`], ['system', stamp, `Sent to ${pc.name}. A reply that changes a date opens a change request; the next one goes in ${C.standingEmailDays} days.`]] });
+    c.statusSent = iso(TODAY); done.add('status-' + c.id);
+    orders.forEach(poId => { const n = rows.filter(s => s.po === poId).length; po(poId).activity.push([iso(TODAY), `Open order status sent to ${pc.name} (${n} shipment${n === 1 ? '' : 's'} on this order).`]); });
+    exportOpen = null; toast(`<b>Sent.</b> ${esc(subject)} emailed to ${esc(pc.name)} with the CSV attached. The thread is in Chats, awaiting reply.`); render();
+  },
+  notifyUnreachable(sid) {
+    const s = ship(sid), p = po(s.po), c = cust(p.customer), pc = contactsOf(c.id).find(x => x.primary), cr = vendor(s.appt.carrier), who = s.delivery.name.split(',')[0], stamp = nowStamp();
+    const body = `Hi ${pc ? pc.name.split(' ')[0] : 'there'},\n\n${cr.name} has called ${who} (${s.delivery.phone}) ${s.appt.attempts.length} times since ${fmtLong(s.appt.attempts[0])} to set the delivery appointment for ${s.name} of ${p.job}, estimated ${fmtLong(eta(s))}, and has not reached anyone. The site asks for ${s.appt.notice} hours' notice, so the truck cannot be dispatched until someone confirms a time, and a missed delivery adds a redelivery charge.\n\nPlease reply with a delivery window that works, or someone else who can take the carrier's call.\n\n${TEAM[ME]}`;
+    threads.unshift({ id:newThreadId(), subject:`Action required: delivery appointment for ${p.job} – ${s.name}`, company:c.id, contact:pc ? pc.id : null, assignee:ME, status:'awaiting', unread:false, custSeen:false, po:p.id, msgs:[['us', stamp, body, null, `${TEAM[ME]} · delivery hold-up`], ['system', stamp, `Flagged "Action required". ${cr.name} holds dispatch until the customer confirms a window.`]] });
+    s.appt.notified = iso(TODAY); done.add('unreach-' + sid);
+    p.activity.push([iso(TODAY), `${s.name}: ${cr.name} could not reach ${who} after ${s.appt.attempts.length} calls. ${pc ? pc.name : 'The customer'} notified, flagged "Action required".`]);
+    toast(`<b>Sent.</b> ${esc(pc ? pc.name : c.name)} told that ${esc(cr.name)} cannot reach ${esc(who)}; flagged "Action required".`); render();
+  },
 });
-
 
 /* ---------- Record pages: one pattern for orders, customers, vendors and contacts ----------
    Header with back link and actions, a status banner, a tab row (content left, tools right),
@@ -1563,14 +1631,14 @@ function viewCustomer(id, tab) {
     : tab === 'activity' ? feedRowsHtml(acts.slice(0, 60), 'No activity yet.')
     : listCard(['queue', 'production', 'complete'].flatMap(l => cp.filter(p => p.lane === l)).map(orderRow), 'No orders yet.');
   const pc = cts.find(x => x.primary);
-  return pageHeader(esc(c.name), `Customer · ${esc(c.hq)} · rep ${esc(c.rep)}`, `${c.onboarded ? sb('active', 'Onboarded') : sb('pending', 'Onboarding')}<button class="btn btn-outline-secondary btn-sm" onclick="act.exportPreview('${c.id}')"><i class="bi bi-file-earmark-spreadsheet me-1"></i> Export open orders</button><a class="btn btn-outline-secondary btn-sm" href="#portal" onclick="act.portalCustomer('${c.id}')"><i class="bi bi-eye me-1"></i> View their portal</a><button class="btn btn-outline-secondary btn-sm" onclick="act.remind('${(firstQueued || cp[0] || {}).id || ''}')" ${firstQueued ? '' : 'disabled'}><i class="bi bi-bell me-1"></i> Send reminder</button>${exportModal(c)}`, { back: 'customers' }) +
+  return pageHeader(esc(c.name), `Customer · ${esc(c.hq)} · rep ${esc(c.rep)}`, `${c.onboarded ? sb('active', 'Onboarded') : sb('pending', 'Onboarding')}<button class="btn btn-outline-secondary btn-sm" onclick="act.exportPreview('${c.id}')"><i class="bi bi-file-earmark-spreadsheet me-1"></i> Open order status</button><a class="btn btn-outline-secondary btn-sm" href="#portal" onclick="act.portalCustomer('${c.id}')"><i class="bi bi-eye me-1"></i> View their portal</a><button class="btn btn-outline-secondary btn-sm" onclick="act.remind('${(firstQueued || cp[0] || {}).id || ''}')" ${firstQueued ? '' : 'disabled'}><i class="bi bi-bell me-1"></i> Send reminder</button>${exportModal(c)}`, { back: 'customers' }) +
     banner + pageNav(tabs, tools) +
     `<div class="show-layout"><div class="show-main">${main}</div><div class="show-sidebar">
       ${detailCard('Account', '', `<ul class="meta-list">
         <li class="meta-item"><span class="meta-label">Primary contact</span><span class="meta-value">${pc ? `<a href="#contact-${pc.id}">${esc(pc.name)}</a><div class="fw-normal text-body-secondary mono">${esc(pc.email)}</div>` : '—'}</span></li>
         <li class="meta-item"><span class="meta-label">Onboarding</span><span class="meta-value">${c.onboarded ? 'Complete' : 'In progress'}</span></li>
         <li class="meta-item"><span class="meta-label">Lead times in portal</span><span class="meta-value">${c.showLeadTimes ? 'Visible' : 'Hidden'} <a href="#customer-${c.id}" onclick="act.toggleLead('${c.id}')" class="fw-normal">change</a></span></li>
-        <li class="meta-item"><span class="meta-label">Standing email</span><span class="meta-value">Every ${C.standingEmailDays} days<div class="fw-normal text-body-secondary">last opened ${c.id === 'fantasia' ? sb('danger', 'never') : 'Oct 19'}</div></span></li>
+        <li class="meta-item"><span class="meta-label">Open order status</span><span class="meta-value">Every ${C.standingEmailDays} days <a href="#customer-${c.id}" onclick="event.preventDefault();act.exportPreview('${c.id}')" class="fw-normal">preview</a><div class="fw-normal text-body-secondary">${c.statusSent ? `last sent ${fmt(c.statusSent)}${statusDue(c) ? ', due now' : ''}` : sb('danger', 'never sent')}</div></span></li>
         <li class="meta-item"><span class="meta-label">PO completeness</span><span class="meta-value mono">${c.completeness}%</span></li>
         <li class="meta-item"><span class="meta-label">Changes / 90d</span><span class="meta-value mono">${c.cos90}</span></li></ul>`)}
       ${notesCard(c.notes)}
@@ -1623,8 +1691,8 @@ function viewContact(id, tab) {
   const tabList = [...(isCust ? [['orders', cp.length]] : []), ['changes', cos.length, warnIf(cos.some(x => x.status === 'pending'))], ['chats', ths.length, warnIf(ths.some(t => t.status === 'open'))], ['activity', acts.length]];
   tab = tabList.some(t => t[0] === tab) ? tab : tabList[0][0];
   const banner = ct.status === 'left' ? `<div class="status-banner danger"><i class="bi bi-person-x"></i><span><strong>No longer at ${esc(co.name)}.</strong> ${esc(ct.note || '')}</span></div>`
-    : ct.primary ? `<div class="status-banner active"><i class="bi bi-person-check"></i><span><strong>Primary contact</strong> for ${esc(co.name)}. ${isCust ? 'Gets standing emails, reminders and departure notices.' : 'Gets booking requests, status checks and lead-time questions.'}</span></div>`
-    : `<div class="status-banner info"><i class="bi bi-person"></i><span>Gets only the threads they start. Make them primary to send them standing emails and reminders.</span></div>`;
+    : ct.primary ? `<div class="status-banner active"><i class="bi bi-person-check"></i><span><strong>Primary contact</strong> for ${esc(co.name)}. ${isCust ? 'Gets open order status emails, reminders and departure notices.' : 'Gets booking requests, status checks and lead-time questions.'}</span></div>`
+    : `<div class="status-banner info"><i class="bi bi-person"></i><span>Gets only the threads they start. Make them primary to send them open order status emails and reminders.</span></div>`;
   const tabs = showTabs(`contact-${id}`, tabList, tab);
   const tools = { orders: `<a class="btn btn-sm btn-outline-secondary" href="${companyLink(co)}">Open ${esc(co.name.split(' ')[0])}</a>`, changes: `<a class="btn btn-sm btn-outline-secondary" href="#changes">All change requests</a>`, chats: `<a class="btn btn-sm btn-outline-secondary" href="#chats-open">All chats</a>`, activity: `<a class="btn btn-sm btn-outline-secondary" href="#feed">Open the feed</a>` }[tab];
   const main = tab === 'changes' ? listCard(cos.map(x => coRow(x)), `No change requests from ${esc(first)}.`)
@@ -1638,7 +1706,7 @@ function viewContact(id, tab) {
         <li class="meta-item"><span class="meta-label">Company</span><span class="meta-value"><a href="${companyLink(co)}">${esc(co.name)}</a><div class="fw-normal text-body-secondary">${companyRoles(co).join(', ')}</div></span></li>
         <li class="meta-item"><span class="meta-label">Email</span><span class="meta-value mono">${esc(ct.email)}</span></li>
         <li class="meta-item"><span class="meta-label">Phone</span><span class="meta-value mono">${ct.phone ? esc(ct.phone) : '—'}</span></li>
-        <li class="meta-item"><span class="meta-label">Receives</span><span class="meta-value">${ct.primary ? (isCust ? 'Standing emails, reminders, departure notices' : 'Booking requests, status checks') : 'Only threads they started'}</span></li></ul>`)}
+        <li class="meta-item"><span class="meta-label">Receives</span><span class="meta-value">${ct.primary ? (isCust ? 'Open order status emails, reminders, departure notices' : 'Booking requests, status checks') : 'Only threads they started'}</span></li></ul>`)}
       <div class="detail-card"><div class="detail-card-header"><h3>Others at ${esc(co.name.split(' ')[0])}</h3></div><ul class="action-list">${contactsOf(co.id).filter(x => x.id !== id).map(x => contactRow(x)).join('') || '<li class="empty">No one else on file.</li>'}</ul></div>
     </div></div>`;
 }
@@ -1664,7 +1732,7 @@ function factoryForecast(vendorId) {
 
 /* ---------- views: chats ---------- */
 const CHAT_TABS = [['inbox','My inbox'],['open','Open'],['awaiting','Awaiting reply'],['closed','Closed']];
-const CHAT_DESC = { get inbox() { return `Threads assigned to ${TEAM[ME]} that are not closed. Your work list.`; }, open:'The other party spoke last. A reply is drafted for you from the order and the change request; edit it or send it as written.', awaiting:'We replied last. Waiting on the customer or vendor; reminders go out on the cadence in Constraints.', closed:'Resolved. A new message from them reopens the thread automatically.' };
+const CHAT_DESC = { get inbox() { return `Threads assigned to ${TEAM[ME]} that are not closed. Your work list.`; }, open:'The other party spoke last. Draft a reply gives you a start from the order and the change request; nothing is pre-filled.', awaiting:'We replied last. Waiting on the customer or vendor; reminders go out on the cadence in Constraints.', closed:'Resolved. A new message from them reopens the thread automatically.' };
 const threadStatusBadge = t => ({ open: sb('pending', 'Open'), awaiting: sb('info', 'Awaiting reply'), closed: sb('inactive', 'Closed') }[t.status]);
 const initials = n => n.split(/\s+/).map(w => w[0]).join('').slice(0, 2).toUpperCase();
 function threadListItem(t, selected) {
@@ -1683,14 +1751,14 @@ function threadView(t) {
     ${composer(t, ct)}</div>`;
 }
 function composer(t, ct) {
-  const drafted = t.status === 'open' && t.draft && !t.draftDismissed;
+  const drafted = t.status === 'open' && t.draft && t.draftShown && !t.draftDismissed;
   const sources = [t.po ? po(t.po).job : null, t.co ? t.co : null, ...(t.cos || []), 'this thread'].filter(Boolean).join(', ');
   return `<div class="composer ${drafted ? 'drafted' : ''}">
-    ${drafted ? `<div class="draft-note"><i class="bi bi-magic"></i><span><b>Reply drafted for you</b> from ${esc(sources)}. Edit anything, then send. Nothing goes out until you click.</span></div>` : ''}
+    ${drafted ? `<div class="draft-note"><i class="bi bi-magic"></i><span><b>Draft</b> from ${esc(sources)}. Edit anything, then send. Nothing goes out until you click.</span></div>` : ''}
     <textarea class="form-control" id="reply-${t.id}" placeholder="Reply to ${ct ? esc(ct.name) : 'the sender'}… Sent as email; they can also answer in the portal.">${drafted ? esc(t.draft) : ''}</textarea>
     <div class="d-flex justify-content-between align-items-center gap-2 flex-wrap"><div class="d-flex gap-2 flex-wrap">
       <button class="btn btn-sm btn-outline-secondary" onclick="act.stub('<b>Prototype.</b> A change request form, pre-filled from this thread, would open here.')"><i class="bi bi-arrow-left-right me-1"></i>Create change request</button>
-      ${drafted ? `<button class="btn btn-sm btn-outline-secondary" onclick="act.discardDraft('${t.id}')"><i class="bi bi-x-lg me-1"></i>Discard draft</button>` : (t.draft && t.status === 'open' ? `<button class="btn btn-sm btn-outline-secondary" onclick="act.restoreDraft('${t.id}')"><i class="bi bi-magic me-1"></i>Redraft</button>` : `<button class="btn btn-sm btn-outline-secondary" onclick="act.stub('<b>Prototype.</b> A draft from the order, the change request, and this thread would appear here.')"><i class="bi bi-magic me-1"></i>Draft a reply</button>`)}
+      ${drafted ? `<button class="btn btn-sm btn-outline-secondary" onclick="act.discardDraft('${t.id}')"><i class="bi bi-x-lg me-1"></i>Discard draft</button>` : t.status === 'open' ? `<button class="btn btn-sm btn-outline-secondary" onclick="act.draftReply('${t.id}')" title="A start from the order, the change request and this thread"><i class="bi bi-magic me-1"></i>Draft a reply</button>` : ''}
     </div><button class="btn btn-sm btn-primary" onclick="act.reply('${t.id}', ${drafted})"><i class="bi bi-send me-1"></i>Send reply</button></div></div>`;
 }
 function viewChats(tab, selectedId) {
@@ -1699,7 +1767,8 @@ function viewChats(tab, selectedId) {
   const sel = selectedId ? thread(selectedId) : list[0];
   if (sel && sel.unread && selectedId) sel.unread = false;
   const count = k => threadsFor(k).length;
-  const head = pageHeader('Chats', 'Customer and vendor emails, grouped into threads you can answer here.', `<button class="btn btn-primary btn-sm" onclick="act.stub('<b>Prototype.</b> A new message form would open here.')"><i class="bi bi-pencil-square me-1"></i> New message</button>`) +
+  const ds = draftStats, used = ds.sentAsIs + ds.edited + ds.discarded;
+  const head = pageHeader('Chats', 'Customer and vendor emails, grouped into threads you can answer here.', `<span class="item-sub me-2 d-none d-lg-inline" title="Whether the drafting button earns its place: how often it is clicked and what happens to the draft">Draft a reply: ${ds.requested} clicks since ${fmt(ds.since)} · ${ds.sentAsIs} sent as written · ${ds.edited} edited · ${ds.discarded} discarded${ds.requested > used ? ` · ${ds.requested - used} open` : ''}</span><button class="btn btn-primary btn-sm" onclick="act.stub('<b>Prototype.</b> A new message form would open here.')"><i class="bi bi-pencil-square me-1"></i> New message</button>`) +
   pageNav(`<ul class="nav nav-tabs">${CHAT_TABS.map(x => `<li class="nav-item"><a class="nav-link ${tab===x[0]?'active':''}" href="#chats-${x[0]}">${x[1]} ${x[0] === 'closed' ? '' : `<span class="badge bg-${x[0]==='open'?'warning':x[0]==='awaiting'?'primary':'secondary'} bg-opacity-10 text-${x[0]==='open'?'warning':x[0]==='awaiting'?'primary':'secondary'}">${count(x[0])}</span>`}</a></li>`).join('')}</ul>`, searchBox('Search threads…') + filterTool('chatFilter', [['all','Everyone'],['me','Assigned to me'],['unassigned','Unassigned']]) + sortTool('chatSort', [['newest','Newest first'],['oldest','Oldest first']])) +
   tabDesc(CHAT_DESC[tab]);
   return head + `
@@ -1728,7 +1797,7 @@ function viewContacts(tab) {
   if (T.contactSort === 'company') rows.sort((a, b) => company(a.company).name.localeCompare(company(b.company).name));
   const tools = searchBox('Search contacts…') + filterTool('contactFilter', [['all','All contacts'],['primary','Primary only'],['left','Left their company']]) + sortTool('contactSort', [['default','Default order'],['name','Name A–Z'],['company','Company A–Z']]);
   const tabs = tabsUl(CONTACT_TABS.map(t => [t[0], t[1], t[0] === 'contacts' ? contacts.length : contacts.filter(ct => (t[0] === 'contacts-vendors') === isVendorContact(ct)).length]), tab ? 'contacts-' + tab : 'contacts');
-  const desc = { customers:'People at the companies that buy from us. The primary contact gets standing emails, reminders, and departure notices.', vendors:'People at factories, forwarders, carriers, and warehouses. Booking requests and lead-time changes go through them.' }[tab] || 'The people behind every company: who to email, who gave which date, and who has left. Turnover at big customers is why a date is tied to a person.';
+  const desc = { customers:'People at the companies that buy from us. The primary contact gets open order status emails, reminders, and departure notices.', vendors:'People at factories, forwarders, carriers, and warehouses. Booking requests and lead-time changes go through them.' }[tab] || 'The people behind every company: who to email, who gave which date, and who has left. Turnover at big customers is why a date is tied to a person.';
   return pageHeader('Contacts', 'People at your customers and vendors.', `<button class="btn btn-primary btn-sm" onclick="act.stub('<b>Prototype.</b> New contact form would open here.')"><i class="bi bi-plus-lg me-1"></i> New contact</button>`) + pageNav(tabs, tools) + tabDesc(desc) +
   `<div class="data-table-wrapper"><div class="table-responsive"><table class="table table-hover"><thead><tr><th>Name</th><th>Company</th><th>Title</th><th>Email</th><th>Phone</th><th>Status</th></tr></thead><tbody>
     ${rows.map(ct => { const co = company(ct.company); return `<tr class="link" onclick="go('contact-${ct.id}')"><td class="item-name"><a href="#contact-${ct.id}">${esc(ct.name)}</a>${ct.primary ? '<div class="item-sub">Primary contact</div>' : ''}</td><td><a href="${companyLink(co)}" class="text-decoration-none">${esc(co.name)}</a><div class="item-sub">${companyRoles(co).join(', ')}</div></td><td>${esc(ct.title)}</td><td class="mono">${esc(ct.email)}</td><td class="mono">${ct.phone ? esc(ct.phone) : '—'}</td><td>${ct.status === 'left' ? sb('danger', 'Left') : sb('active', 'Active')}</td></tr>`; }).join('')}
@@ -1746,7 +1815,7 @@ function viewSettings() {
   ${detailCard('Domestic from Wanke warehouse (days)', '', grid(f('Pick','pick') + f('Ground to job site','ground')))}
   ${detailCard('Ship-by date (days before the need-by)', 'purchasing\'s rule; it goes on the factory PO', grid(f('West Coast ports','shipByWest') + f('Gulf and East Coast ports','shipByEast')))}
   ${detailCard('Last leg by distance (days)', 'local uses drayage above', grid(f('Regional, 150 to 500 miles','legRegional') + f('Long haul, over 500 miles','legLong') + f('Warehouse release before the truck','release')))}
-  ${detailCard('Communication cadence (days)', '', grid(f('Reminder for missing info, every','reminderDays') + f('"Stop us or it ships" before departure','stopUsDays') + f('Customer standing email, every','standingEmailDays') + f('Team summary, every','teamSummaryDays')))}
+  ${detailCard('Communication cadence (days)', '', grid(f('Reminder for missing info, every','reminderDays') + f('"Stop us or it ships" before departure','stopUsDays') + f('Customer open order status, every','standingEmailDays') + f('Team summary, every','teamSummaryDays')))}
   <div class="detail-card"><div class="detail-card-header"><h3>Auto-approve</h3><span class="card-note">actions people approve almost every time can run on their own</span></div>
     <ul class="action-list">${[['Send intake acknowledgement and missing-info list','100%',true],['Send reminder for missing need-by dates','98%',true],['Send departure notice 10 days before ship','96%',true],['Place with factory on go/no-go date','62%',false],['Approve customer need-by change with no production impact','81%',false]].map((r, i) => actionItem(r[2] ? 'good' : 'muted', esc(r[0]), `Approved without edits ${r[1]} of the time`, `<div class="form-check form-switch m-0"><input class="form-check-input" type="checkbox" role="switch" id="auto-${i}" ${r[2]?'checked':''} onchange="act.stub('<b>Saved.</b> ' + (this.checked ? 'Now automatic.' : 'Now needs approval.'))"><label class="form-check-label" style="font-size:13px" for="auto-${i}">${r[2]?'Automatic':'Needs approval'}</label></div>`)).join('')}</ul></div>
   </div>`;
@@ -1926,7 +1995,7 @@ function actionOwner(a) {
   const kind = a.id.split('-')[0], co = changes.find(c => c.id === a.id);
   if (co) return ['Customer', 'Contact'].includes(co.context) ? 'marlene' : 'ryan';
   if (['place', 'book', 'overdue'].includes(kind)) return 'ryan';
-  if (['ack', 'acksign', 'remind', 'late', 'stop'].includes(kind)) return 'marlene';
+  if (['ack', 'acksign', 'remind', 'late', 'stop', 'status', 'unreach'].includes(kind)) return 'marlene';
   return (kind === 'draft' && thread(a.id.slice(6))?.assignee) || 'melissa';
 }
 const openAsRep = k => pos.filter(p => p.rep === firstName(k) && !shipsOf(p.id).every(isDelivered));
