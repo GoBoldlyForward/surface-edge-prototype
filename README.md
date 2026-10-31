@@ -24,7 +24,7 @@ Sample data only. "Today" is pinned to Oct 26, 2026 so the milestone math stays 
 
 - **Purchase order → shipments → milestones.** The shipment is the unit of tracking. "Container 1" or "Pallet 1" is just a name the team chooses. The kind is either an ocean container or an LTL pallet.
 - **Milestones come from editable lead times** (Constraints page). Change a lead time and every planned date recalculates. Ocean transit by port uses medians from the order history. The other numbers are placeholders until purchasing confirms them.
-- **Ship-by dates.** Ship-by is the date the container departs the origin port to make the need-by (Ryan, Oct 28), and the mill finishes production ahead of it. Purchasing sets it to the need-by minus 28 days for West Coast ports and 35 for Gulf and East Coast. A confirmed booking replaces the estimated departure and arrival. A milestone that passes with nothing recorded is flagged, and everything after it moves.
+- **Ship-by dates.** Ship-by is the date the container departs the origin port to make the need-by (Ryan, Oct 28), and the mill finishes production about a week ahead of it (purchasing, Oct 30). Purchasing sets it to the need-by minus 28 days for West Coast ports and 35 for Gulf and East Coast. A confirmed booking replaces the estimated departure and arrival. A milestone that passes with nothing recorded is flagged, and everything after it moves.
 - **Need-by dates can be a date, ASAP, or relative to another shipment** ("six weeks after Container 1"). The customer's requested date is kept next to the date we committed to.
 - **Companies hold roles.** Customers and vendors are both companies. Vendor roles are factory, freight forwarder, customs broker, drayage carrier, LTL carrier, and warehouse, and each role owns a lead time. Contacts are people at a company. The primary contact gets standing emails and reminders.
 
@@ -95,6 +95,5 @@ A single feed was considered and rejected. A time-ordered list buries urgent app
 
 - Confirmed lead times from purchasing. Two things are still unknown: whether the order matrix's production date means finished or scheduled, and how much of the gap before sailing is waiting for a booking.
 - Sample PO emails (good, bad, typical, and non-PDF) and a customer list export.
-- The production deadline purchasing uses ahead of the ship-by (departure) date.
 - Who owns the delivery appointment, the carrier or Surface Edge, and how long a no-answer waits before it escalates.
 - The ERP replacing the current system in February 2027. Until then the bridge is a CSV export, not an integration.

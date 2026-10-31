@@ -31,7 +31,7 @@ const rel = dt => { const n = diffDays(dt, TODAY); if (n === 0) return 'today'; 
    Ocean transit by port: median days from departure to US port in Surface Edge's order history, 2022 to 2026.
    Everything else is still Ryan's napkin numbers (placeholders). */
 const C = {
-  production: 45, loadout: 21, loadoutUrgent: 10, clearance: 5, drayage: 3, bookingLead: 21, bookingBack: 5, pick: 2, ground: 4,
+  production: 45, loadout: 7, clearance: 5, drayage: 3, bookingLead: 21, bookingBack: 5, pick: 2, ground: 4,
   ocean: { 'Los Angeles': 14, 'Long Beach': 14, 'Houston': 30, 'Savannah': 33, 'Charleston': 32, 'Miami': 32, 'Tampa': 32, 'Portland': 21, 'Tacoma': 18 },
   reminderDays: 7, stopUsDays: 10, standingEmailDays: 7,
 };
@@ -265,7 +265,7 @@ const changes = [
   { id:'CO-2033', context:'Shipment', po:'PO-4488', ship:'S9', by:'Customer · Luis Ortega (TCC)', via:'Email', received:'2026-10-24', type:'Pull in', from:'Feb 24, 2027', to:'Nov 10, 2026', status:'pending',
     impact:'4,000 sq ft balance from Wanke Georgia can ship any time; stock on hand is 6,200 sq ft. Shipping early reduces what is left for balances on other jobs. Recommend: approve.' },
   { id:'CO-2032', context:'Shipment', po:'PO-4502', ship:'S11', by:'Customer · Priya Natarajan (Fantasia)', via:'Portal', received:'2026-10-26', type:'Set need-by', from:'Unknown', to:'Sep 1, 2027', status:'pending',
-    impact:'First need-by for Midtown Lofts. Place-by date would be May 24, 2027. Shipment moves from unknown to forecastable. Recommend: approve and send remaining-shipments reminder.' },
+    impact:'First need-by for Midtown Lofts. Place-by date would be May 28, 2027. Shipment moves from unknown to forecastable. Recommend: approve and send remaining-shipments reminder.' },
   { id:'CO-2034', context:'Vendor', target:'daizhin', by:'Vendor · Ji-ho Park (Daizhin)', via:'Email', received:'2026-10-23', type:'Lead time change', from:'45-day production', to:'52-day production through Feb 1, 2027', status:'pending',
     impact:'Holiday shutdown at the mill. Every unplaced Daizhin shipment with a place-by date before Feb 1 moves 7 days earlier. Container 2 of Peachtree Commons would need to be placed by Oct 30. Recommend: approve and set the production constraint to 52.' },
   { id:'CO-2035', context:'Contact', target:'ilg', by:'Customer · Marcus Hale (ILG)', via:'Email', received:'2026-10-22', type:'Primary contact change', from:'Dana Whitfield', to:'Marcus Hale for Dallas jobs', status:'pending',
@@ -444,7 +444,7 @@ Object.assign(C, { shipByWest: 28, shipByEast: 35 });
 const afterSailDays = s => durations(s).slice(3).reduce((a, b) => a + b, 0);
 const shipByDays = s => s.via ? afterSailDays(s) : WEST_COAST.includes(s.port) ? C.shipByWest : C.shipByEast;
 function shipByDate(s) { if (s.type !== 'container' || !s.needBy) return null; return addDays(s.needBy, -shipByDays(s)); }
-const productionBy = s => shipByDate(s) ? addDays(shipByDate(s), -(s.asap ? C.loadoutUrgent : C.loadout)) : null;
+const productionBy = s => shipByDate(s) ? addDays(shipByDate(s), -C.loadout) : null;
 /* Days a container placed early is held back so it ships on its ship-by date instead of as soon as it can be made. */
 function holdDays(s) {
   const sb = s.placedAt && !s.actual[2] && !(s.booking && s.booking.etd) ? shipByDate(s) : null; if (!sb) return 0;
@@ -499,16 +499,11 @@ const overdueMs = s => milestones(s).find(m => m.overdue) || null;
 const MS_SHORT = { 'Production complete':'Production', 'Departed origin port':'Departure', 'Arrived US port':'Port arrival', 'Cleared and released':'Release', 'Delivered':'Delivery', 'Picked':'Pick', 'Shipped':'Pickup' };
 /* Who to ask when a milestone is overdue: the factory or warehouse, then the forwarder, then the last-leg carrier. */
 const msVendor = (s, i) => vendor(s.type === 'container' ? [s.originCo, s.originCo, s.forwarder, s.forwarder, s.forwarder, s.carrier][i] : [s.originCo, s.originCo, s.carrier, s.carrier][i]);
-/* Purchasing requests a booking two to four weeks before the sailing it wants, and the booking comes back one to five days later (Oct 28).
-   So the request is timed from the planned sailing, and a request with nothing back after C.bookingBack days comes up to chase. */
+/* Purchasing requests a booking two to four weeks before the sailing it wants, so on plan the request falls during production. */
 const bookingBy = s => addDays(milestones(s)[2].date, -C.bookingLead);
 const bookingLate = s => s.type === 'container' && s.placedAt && s.stage < 2 && !s.booking && !s.bookingRequested && bookingBy(s) < TODAY;
 const bookingStuck = s => s.type === 'container' && !!s.bookingRequested && !s.booking && !s.actual[2] && diffDays(TODAY, s.bookingRequested) > C.bookingBack;
 Object.assign(ship('S6'), { bookingRequested: '2026-10-19' });   // Lakeshore Container 2 finished Oct 10; the request went out Oct 19 and nothing has come back
-/* Purchasing books urgent orders while they are still in production, and other jobs once production is done (Oct 28). An ASAP container plans
-   C.loadoutUrgent days from production finished to sailing, so its booking request falls during production. Everything else plans C.loadout. */
-const legsBookedAfterProduction = durations;
-durations = s => { const dur = legsBookedAfterProduction(s); if (s.type === 'container' && s.asap) dur[2] = C.loadoutUrgent; return dur; };
 
 /* ---------- derived ---------- */
 function queueReasons(p) {
@@ -1809,7 +1804,7 @@ function viewSettings() {
   const grid = inner => `<div class="row row-cols-2 row-cols-md-3 row-cols-lg-5 g-3">${inner}</div>`;
   return pageHeader('Constraints', 'Lead times that set every planned date in the system.') +
   `<div class="stack">
-  ${detailCard('Ocean shipment legs (days)', '', grid(f('Factory production','production') + f('Production finished to sailing','loadout') + f('Production finished to sailing, ASAP orders','loadoutUrgent') + f('Booking request before sailing','bookingLead') + f('Booking comes back within','bookingBack') + f('Port clearance','clearance') + f('Drayage to destination','drayage')))}
+  ${detailCard('Ocean shipment legs (days)', '', grid(f('Factory production','production') + f('Production finished to sailing','loadout') + f('Booking request before sailing','bookingLead') + f('Booking comes back within','bookingBack') + f('Port clearance','clearance') + f('Drayage to destination','drayage')))}
   ${detailCard('Ocean transit from Korea by US port (days)', 'median of the order history', grid(Object.keys(C.ocean).map(p => f(p, 'ocean', p, OCEAN_HISTORY[p])).join('')))}
   ${detailCard('Port pickup (days)', 'from release until the truck leaves the port', grid(f('Picked up from port','pickup')))}
   ${detailCard('Domestic from Wanke warehouse (days)', '', grid(f('Pick','pick') + f('Ground to job site','ground')))}
