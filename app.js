@@ -224,6 +224,9 @@ const BOOKINGS = {
   S7: { ref:'PLX-78811', confirmed:'2026-10-09', vessel:'Golden Strait 1102E', container:null, etd:'2026-11-02', eta:'2026-12-05' },
 };
 shipments.forEach(s => { if (BOOKINGS[s.id]) s.booking = BOOKINGS[s.id]; });
+/* Sample values. The report's notes carry these to the customer, so nothing internal goes here. */
+const SHIP_LOG = { S2: [['2026-09-02', 'Production +6 cartons.'], ['2026-10-21', 'Vessel delayed, per forwarder.']], S5: [['2026-10-06', 'Booking bumped.'], ['2026-10-08', 'Production +11 cartons.']] };
+shipments.forEach(s => { if (SHIP_LOG[s.id]) s.log = SHIP_LOG[s.id].map(([at, text]) => ({ at, text })); });
 const vendorRoleOn = (v, s) => s.originCo === v ? (vendor(v).roles[0]) : s.forwarder === v ? 'Forwarder' : s.carrier === v ? 'Carrier' : s.via === v ? 'Warehouse stop' : null;
 const vendorShipments = v => shipments.filter(s => vendorRoleOn(v, s));
 
@@ -741,6 +744,7 @@ const act = {
     if (JSON.stringify(dl) !== JSON.stringify(dlWas)) { changed.push(dl.name ? `delivery contact → ${dl.name}` : 'delivery details'); s.delivery = dl.name || dl.phone ? dl : null; }
     const pl = v('placed') || null; if (pl !== s.placedAt) { changed.push(`placed ${s.placedAt ? fmt(s.placedAt) : 'not placed'} → ${pl ? fmt(pl) : 'not placed'}`); s.placedAt = pl; if (pl && s.stage < 0) s.stage = 0; if (!pl) { s.stage = -1; s.actual = {}; } }
     Object.keys(STEP_NAMES).forEach(k => { const el = document.getElementById('f-step-' + k); if (!el) return; const val = el.value || null; s.steps = s.steps || {}; if (val !== (s.steps[k] || null)) { changed.push(`${STEP_NAMES[k].toLowerCase()} ${val ? fmt(val) : 'cleared'}`); s.steps[k] = val; (s.stepsByHand = s.stepsByHand || {})[k] = true; } });
+    const note = v('log').trim(); if (note) { (s.log = s.log || []).push({ at:iso(TODAY), text:note }); changed.push(`noted "${note}" for the open order status`); }
     if (!changed.length) { toast('No changes to save.'); return; }
     p.activity.push([iso(TODAY), `${s.name}: ${changed.join('; ')}. Milestones recalculated.`]);
     openShips.add(s.id); toast(`<b>Saved.</b> ${changed.length} change${changed.length > 1 ? 's' : ''} to ${esc(s.name)}; milestones recalculated.`); go('po-' + p.id.slice(3));
@@ -1447,6 +1451,7 @@ function viewShipEdit(sid) {
       <div class="col-12"><label class="form-label small" for="f-dl-rules">Delivery rules, one per line</label><textarea class="form-control form-control-sm" id="f-dl-rules" rows="3">${esc((s.delivery?.rules || []).join('\n'))}</textarea></div>
     </div>`)}
     ${s.type === 'container' && s.placedAt ? detailCard('Steps between milestones', 'record each as it happens', `<div class="row g-3">${steps(s).map(x => field(x.name, txt('f-step-' + x.key, (s.steps || {})[x.key] || '', 'date'))).join('')}</div>`) : ''}
+    ${detailCard('Notes for the open order status', 'customers see these', `${(s.log || []).length ? `<ul class="small mb-3 ps-3">${s.log.map(l => `<li><span class="mono">${fmt(l.at)}</span> ${esc(l.text)}</li>`).join('')}</ul>` : ''}<div class="row g-3">${field('Add a note', `<input class="form-control form-control-sm" id="f-log" list="log-hints">`, true)}</div><datalist id="log-hints">${['Booking bumped', 'Production + cartons', 'Hold at port', 'Released at port', 'Diverted to warehouse', 'Swapped dates with order'].map(x => `<option value="${x}">`).join('')}</datalist><div class="item-sub mt-2">For what the order record cannot know on its own. It goes in the notes column of the customer's report; anything internal belongs in the order's notes.</div>`)}
     ${detailCard('What saving changes', '', `<div style="font-size:13px;color:var(--text-2);line-height:1.6">Changing the need-by, origin, port, or placed date recalculates every milestone from the lead times in Constraints. The customer sees the new dates in their portal${c.showLeadTimes ? '' : ' (lead times are hidden for this customer, so only the need-by and status)'}. Changing the kind switches between the ocean and domestic milestone chains. Renaming is cosmetic and logged.</div>`)}
     ${detailCard('Milestones at current values', '', msList(s))}
   </div><div class="show-sidebar">${poSidebar(p, c)}</div></div>`;
@@ -1513,16 +1518,23 @@ const msUS = (s, i) => { if (s.type !== 'container' || !(s.placedAt || s.needBy)
 const atWarehouse = s => !!s.via && !!s.placedAt && s.stage === milestones(s).length - 2;
 const whoSaid = c => c.by.split('·')[1].trim().replace(/\s*\(.*\)$/, '');
 function statusNotes(s) {
-  const n = [];
-  if (s.asap) n.push('Need by ASAP.'); else if (s.needAfter) n.push(`Need by ${afterText(s)}${s.needBy ? ` (${fmtUS(s.needBy)})` : ''}.`); else n.push(s.requested || s.needBy ? `Need by ${fmtUS(s.requested || s.needBy)}.` : 'Need by date not given yet.');
-  changes.filter(c => c.ship === s.id && /need-by|pull in|push/i.test(c.type) && c.status !== 'rejected').sort((a, b) => a.received > b.received ? 1 : -1)
-    .forEach(c => n.push(`${fmtUS(c.received)} ${whoSaid(c)} ${c.status === 'pending' ? 'asked to move need by date to' : 'revised need by date to'} ${c.to}${c.status === 'pending' ? ' (under review)' : ''}.`));
-  if (s.hold) n.push('Held in queue.');
-  if (s.placedAt) n.push(`Placed with ${s.origin.split(',')[0]} ${fmtUS(s.placedAt)}.`);
+  const log = [];
+  changes.filter(c => c.ship === s.id && /need-by|pull in|push/i.test(c.type) && c.status !== 'rejected')
+    .forEach(c => log.push([c.received, `${fmtUS(c.received)} ${whoSaid(c)} ${c.status === 'pending' ? 'asked to move need by date to' : 'revised need by date to'} ${c.to}${c.status === 'pending' ? ' (under review)' : ''}.`]));
+  if (s.placedAt) log.push([s.placedAt, `Placed with ${s.origin.split(',')[0]} ${fmtUS(s.placedAt)}.`]);
   if (s.type === 'container') {
-    if (s.booking) n.push(`Booked to depart ${fmtUS(s.booking.etd)} for Port of ${s.port}.`); else if (s.bookingRequested) n.push(`Booking requested ${fmtUS(s.bookingRequested)}.`);
-    if (s.actual[2]) n.push('Departed.'); if (s.steps && s.steps.arrivalNotice) n.push('Arrival Notice.'); if (s.actual[3]) n.push('Arrived.'); if (s.actual[4]) n.push('Cleared and released.'); if (s.steps && s.steps.pickedUp) n.push(`Picked up ${fmtUS(s.steps.pickedUp)}.`);
-  } else { if (s.actual[1]) n.push('Picked.'); if (s.actual[2]) n.push('Shipped.'); }
+    if (s.booking) log.push([s.booking.confirmed || s.booking.etd, `Booked to depart ${fmtUS(s.booking.etd)} for Port of ${s.port}.`]); else if (s.bookingRequested) log.push([s.bookingRequested, `Booking requested ${fmtUS(s.bookingRequested)}.`]);
+    if (s.actual[2]) log.push([s.actual[2], 'Departed.']);
+    if (s.steps && s.steps.arrivalNotice) log.push([s.steps.arrivalNotice, 'Arrival Notice.']);
+    if (s.actual[3]) log.push([s.actual[3], 'Arrived.']);
+    if (s.actual[4]) log.push([s.actual[4], 'Cleared and released.']);
+    if (s.steps && s.steps.pickedUp) log.push([s.steps.pickedUp, `Picked up ${fmtUS(s.steps.pickedUp)}.`]);
+  } else { if (s.actual[1]) log.push([s.actual[1], 'Picked.']); if (s.actual[2]) log.push([s.actual[2], 'Shipped.']); }
+  (s.log || []).forEach(l => log.push([l.at, `${fmtUS(l.at)} ${l.text.replace(/\.?$/, '.')}`]));
+  log.sort((a, b) => a[0] > b[0] ? 1 : a[0] < b[0] ? -1 : 0);
+  const need = s.asap ? 'Need by ASAP.' : s.needAfter ? `Need by ${afterText(s)}${s.needBy ? ` (${fmtUS(s.needBy)})` : ''}.` : s.requested || s.needBy ? `Need by ${fmtUS(s.requested || s.needBy)}.` : 'Need by date not given yet.';
+  const n = [need, ...log.map(x => x[1])];
+  if (s.hold) n.push('Held in queue.');
   if (atWarehouse(s)) n.push(`Available at ${vendor(s.via).name}.`);
   if (s.appt) n.push(s.appt.status === 'unreachable' ? `${vendor(s.appt.carrier).name} unable to reach ${s.delivery.name.split(',')[0]} for the delivery appointment (${s.appt.attempts.length} calls)${s.appt.notified ? `; customer notified ${fmtUS(s.appt.notified)}` : ''}.` : `Delivery appointment ${fmtUS(s.appt.for)}.`);
   return n.join(' ');

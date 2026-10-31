@@ -48,6 +48,7 @@ The lane is worked out from the shipments, not stored. Individual shipments can 
 - **Open order status email.** Annalisa's report, kept as the format everyone already reads: one row per open shipment with job, PO and order numbers, product and spec, quantity and cartons, destination, placement date, the PO's need-by next to the current need-by, ETD, ETA to the US port and to the destination, and a notes log the system writes from the order record. It goes to the customer's primary contact on the cadence in Constraints (weekly) and asks them to confirm the dates; a reply that moves a date becomes a change request. The team copy adds internal references. Preview, download and send it from the customer page.
 - **Delivery appointments.** The site contact's notice rule lives on the shipment (24 hours and an appointment for TCC sites, 48 hours for ILG). When the carrier cannot reach the site contact, the system proposes a notice to the customer flagged "Action required" and dispatch holds until a window is confirmed.
 - **Recorded, not typed.** Milestones and steps that came from vendor emails and portals carry a robot icon naming the source. A click is only for a decision or for something that happens outside the system.
+- **Logged, for what only a person knows.** A bumped booking, extra cartons, a hold at the port. Each is logged on the shipment and reads in date order with everything else in the status report's notes column, so customers see it. Internal notes stay on the order.
 
 ### Customer portal
 
