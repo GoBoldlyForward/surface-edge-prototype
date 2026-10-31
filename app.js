@@ -553,7 +553,7 @@ function nextActions() {
   shipments.filter(s => s.placedAt && !isDelivered(s) && overdueMs(s)).forEach(s => { const m = overdueMs(s), v = msVendor(s, m.i); a.push({ id:'overdue-'+s.id, k:'warn', t:`Check on ${s.name} of ${po(s.po).job}: ${(MS_SHORT[m.name] || m.name).toLowerCase()} not recorded`, d:`Estimated ${fmt(m.due)}; nothing recorded ${m.overdue} day${m.overdue > 1 ? 's' : ''} later. Later dates now count from today.`, link:'po-'+s.po.slice(3), btn:'Approve: ask for status', toast:`Status request sent to ${v ? esc(v.name) : 'the vendor'}.` }); });
   shipments.filter(bookingLate).forEach(s => a.push({ id:'book-'+s.id, k:'warn', t:`Request a booking for ${s.name} of ${po(s.po).job}`, d:`Should have gone out by ${fmt(bookingBy(s))}, ${C.bookingLead} days before it sails ${fmt(milestones(s)[2].date)}. Bookings come back within about ${C.bookingBack} days.`, link:'po-'+s.po.slice(3), btn:'Approve: request booking', fn:`act.requestBooking('${s.id}')` }));
   shipments.filter(bookingStuck).forEach(s => a.push({ id:'book-chase-'+s.id, k:'warn', t:`Chase the booking for ${s.name} of ${po(s.po).job}`, d:`Requested ${fmt(s.bookingRequested)}, nothing back after ${diffDays(TODAY, s.bookingRequested)} days. Planned to sail ${fmt(milestones(s)[2].date)}.`, link:'po-'+s.po.slice(3), btn:'Approve: ask the forwarder', toast:`Asked ${s.forwarder ? esc(vendor(s.forwarder).name) : 'the forwarder'} where the booking for ${s.name} stands.` }));
-  customers.filter(statusDue).forEach(c => { const pc = contactsOf(c.id).find(x => x.primary), n = openShipsOf(c.id).length; a.push({ id:'status-'+c.id, k:'info', t:`Send ${c.name} their open order status`, d:`${n} open shipment${n === 1 ? '' : 's'}. ${c.statusSent ? `Last sent ${fmt(c.statusSent)}` : 'Never sent'}; it goes every ${C.standingEmailDays} days and asks ${pc ? pc.name.split(' ')[0] : 'the contact'} to confirm the need-by dates.`, link:'customer-'+c.id, btn:'Approve: send', fn:`act.statusSend('${c.id}')` }); });
+  customers.filter(statusDue).forEach(c => { const n = openShipsOf(c.id).length, who = andList(statusPeople(c.id).map(givenName)); a.push({ id:'status-'+c.id, k:'info', t:`Send ${c.name} their open order status`, d:`${n} open shipment${n === 1 ? '' : 's'}. ${c.statusSent ? `Last sent ${fmt(c.statusSent)}` : 'Never sent'}; it goes every ${C.standingEmailDays} days and asks ${who || 'the contact'} to confirm the need-by dates.`, link:'customer-'+c.id, btn:'Approve: send', fn:`act.statusSend('${c.id}')` }); });
   shipments.filter(s => s.appt && s.appt.status === 'unreachable' && !s.appt.notified && !isDelivered(s)).forEach(s => { const cr = vendor(s.appt.carrier), who = s.delivery.name.split(',')[0]; a.push({ id:'unreach-'+s.id, k:'crit', t:`${cr.name} cannot reach ${who} to deliver ${s.name} of ${po(s.po).job}`, d:`${s.appt.attempts.length} calls since ${fmt(s.appt.attempts[0])}, no answer. ${who} needs ${s.appt.notice} hours' notice and est. delivery is ${fmt(eta(s))}. A truck sent without an appointment comes back as a redelivery charge.`, link:'po-'+s.po.slice(3), btn:'Approve: notify customer', fn:`act.notifyUnreachable('${s.id}')` }); });
   return a.filter(x => !done.has(x.id));
 }
@@ -1230,6 +1230,7 @@ Object.assign(act, {
       ack:{ sent:null, signed:null } };
     if (D.custPO.trim()) p.custPO = D.custPO.trim();
     if (D.jobNo.trim()) p.jobNo = D.jobNo.trim();
+    if (!isNew && D.contact) p.reviewer = D.contact;
     Object.defineProperty(p, 'lane', { get: () => { const sh = shipsOf(p.id); return sh.length && sh.every(s => s.invoiced && isDelivered(s)) ? 'complete' : sh.some(s => s.placedAt) ? 'production' : 'queue'; } });
     if (lines.length) LINES[id] = lines;
     let n = Math.max(...shipments.map(s => Number(s.id.slice(1))));
@@ -1376,6 +1377,7 @@ function poSidebar(p, c) {
       <li class="meta-item"><span class="meta-label">Format</span><span class="meta-value">${esc(p.source)}</span></li>
       <li class="meta-item"><span class="meta-label">Contact</span><span class="meta-value">${esc(c.contact)}<div class="fw-normal text-body-secondary mono">${esc(c.email)}</div></span></li>
       <li class="meta-item"><span class="meta-label">Sales rep</span><span class="meta-value">${esc(p.rep)}</span></li>
+      <li class="meta-item"><span class="meta-label">Status report tab</span><span class="meta-value"><select class="form-select form-select-sm" aria-label="Who reviews this job on the open order status" onchange="act.setReviewer('${p.id}', this.value)">${contactsOf(c.id).filter(x => x.status === 'active').map(x => `<option value="${x.id}" ${reviewerOf(p) === x ? 'selected' : ''}>${esc(x.name)}</option>`).join('')}</select></span></li>
       <li class="meta-item"><span class="meta-label">Job folder</span><span class="meta-value">${folderRow(p)}</span></li>
       <li class="meta-item"><span class="meta-label">Lead times in portal</span><span class="meta-value">${c.showLeadTimes ? 'Visible' : 'Hidden'} <a href="#po-${p.id.slice(3)}" onclick="act.toggleLead('${c.id}')" class="fw-normal">change</a></span></li></ul>`)}
     ${ackCard(p)}
@@ -1498,13 +1500,19 @@ const contactRow = (ct, opts = {}) => actionItem(ct.status === 'left' ? 'crit' :
   ct.status === 'active' && !ct.primary ? `<button class="btn btn-sm btn-outline-secondary" onclick="act.setPrimary('${ct.id}')">Make primary</button>` : '');
 const companyChanges = id => changes.filter(c => c.target === id || (c.po && po(c.po).customer === id) || (c.ship && vendorRoleOn(id, ship(c.ship))));
 
-/* Open order status per customer: Annalisa's report, the format the team and customers already know. One row per shipment not
-   yet delivered, grouped by salesperson, with a notes log on every line that the system writes from the order record. The team copy
-   adds internal references at the end. It goes to the primary contact on the cadence in Constraints and asks them to confirm the
-   need-by dates; a reply that moves a date becomes a change request. */
+/* Open order status per customer: the workbook the team and customers already know, a Summary tab plus one tab per person who answers for a job. */
 let exportOpen = null;   // the customer whose report preview is open
+let exportTab = 0;
 const STATUS_SENT = { ilg:'2026-10-20', tcc:'2026-10-21', northwind:'2026-10-13' };
 customers.forEach(c => { c.statusSent = STATUS_SENT[c.id] || null; });
+/* Sample values: ILG splits its jobs between two people. Anyone else's jobs fall to the primary contact. */
+const JOB_REVIEWER = { 'PO-4471':'ct1', 'PO-4441':'ct1', 'PO-4495':'ct2' };
+pos.forEach(p => { if (JOB_REVIEWER[p.id]) p.reviewer = JOB_REVIEWER[p.id]; });
+const reviewerOf = p => {
+  const assigned = p.reviewer && contact(p.reviewer);
+  return assigned && assigned.status === 'active' ? assigned : contactsOf(p.customer).find(x => x.primary && x.status === 'active') || null;
+};
+const jobsOnTab = ct => pos.filter(p => reviewerOf(p) === ct && shipsOf(p.id).some(s => !isDelivered(s)));
 const fmtUS = dt => { const x = d(dt); return `${x.getMonth() + 1}/${x.getDate()}/${x.getFullYear()}`; };
 const needUS = s => s.asap ? 'ASAP' : s.needBy ? fmtUS(s.needBy) : 'TBD';
 const lineOf = s => linesOf(po(s.po))[0];
@@ -1512,6 +1520,14 @@ const productOf = s => { const l = lineOf(s); return l.supplied ? `${l.product} 
 const msUS = (s, i) => { if (s.type !== 'container' || !(s.placedAt || s.needBy)) return ''; const m = milestones(s)[i]; return m.actual || bookedDate(s, i) ? fmtUS(m.date) : `est. ${fmtUS(m.date)}`; };
 const atWarehouse = s => !!s.via && !!s.placedAt && s.stage === milestones(s).length - 2;
 const whoSaid = c => c.by.split('·')[1].trim().replace(/\s*\(.*\)$/, '');
+/* The preliminary notice and tax status sit with operations on the checklist, but the answers come from the customer. */
+const OWED_WORDING = { prelim:'preliminary notice information (general contractor and property owner)', tax:'whether the job is taxable', ack:'the signed acknowledgement', delivery:'a delivery contact', package:'the new account package', deposit:'the deposit' };
+const stillNeeded = p => {
+  const open = shipsOf(p.id).filter(s => !isDelivered(s)), undated = open.filter(s => !s.needBy && !s.asap);
+  const paperwork = p.gate.filter(g => g[3] === 'pending' && (g[2] === 'Customer' || g[0] === 'prelim' || g[0] === 'tax')).map(g => OWED_WORDING[g[0]] || g[1].toLowerCase());
+  const dates = undated.length ? [`${undated.length > 1 ? 'need-by dates' : 'a need-by date'} for ${undated.map(s => s.name).join(', ')}`] : [];
+  return [...paperwork, ...dates, ...(open.some(s => /missing/i.test(s.dest)) ? ['the ship-to address'] : [])];
+};
 function statusNotes(s) {
   const n = [];
   if (s.asap) n.push('Need by ASAP.'); else if (s.needAfter) n.push(`Need by ${afterText(s)}${s.needBy ? ` (${fmtUS(s.needBy)})` : ''}.`); else n.push(s.requested || s.needBy ? `Need by ${fmtUS(s.requested || s.needBy)}.` : 'Need by date not given yet.');
@@ -1525,55 +1541,131 @@ function statusNotes(s) {
   } else { if (s.actual[1]) n.push('Picked.'); if (s.actual[2]) n.push('Shipped.'); }
   if (atWarehouse(s)) n.push(`Available at ${vendor(s.via).name}.`);
   if (s.appt) n.push(s.appt.status === 'unreachable' ? `${vendor(s.appt.carrier).name} unable to reach ${s.delivery.name.split(',')[0]} for the delivery appointment (${s.appt.attempts.length} calls)${s.appt.notified ? `; customer notified ${fmtUS(s.appt.notified)}` : ''}.` : `Delivery appointment ${fmtUS(s.appt.for)}.`);
+  const owed = stillNeeded(po(s.po)); if (owed.length && shipsOf(s.po).find(x => !isDelivered(x)) === s) n.push(`STILL NEEDED: ${owed.join(', ')}.`);
   return n.join(' ');
 }
 const STATUS_COLS = [
-  ['Customer', s => { const p = po(s.po), c = cust(p.customer), pc = contactsOf(c.id).find(x => x.primary); return [c.name, p.rep, pc && pc.name.split(' ')[0], s.delivery && s.delivery.name.split(/,| /)[0]].filter(Boolean).join(' / '); }],
+  ['Customer', s => { const p = po(s.po), rv = reviewerOf(p); return [cust(p.customer).name, rv && rv.name.split(' ')[0], s.delivery && s.delivery.name.split(/,| /)[0]].filter(Boolean).join(' / '); }],
   ['Job #', s => po(s.po).jobNo || ''], ['Job Name', s => `${po(s.po).job} - ${s.name}`], ['PO #', s => s.custPO || po(s.po).custPO || ''], ['Order #', s => s.erpOrder || ''],
   ['Product (include spec)', productOf], ['Quantity on PO', s => s.sqft], ['Cartons', s => { const k = packOf(lineOf(s).supplied || lineOf(s).product, s.sqft); return k ? k.cartons : ''; }],
   ['Destination', s => s.type === 'ltl' ? `${s.dest} ship from ${s.origin}` : s.dest], ['Order placement date', s => fmtUS(po(s.po).received)],
   ['PO need by date', s => s.requested ? fmtUS(s.requested) : needUS(s)], ['Need by date', needUS],
   ['ETD', s => msUS(s, 2)], ['ETA to USA port', s => msUS(s, 3)], ['ETA to final destination', s => atWarehouse(s) ? 'Available' : s.placedAt || s.needBy ? `est. ${fmtUS(eta(s))}` : ''],
   ['Date delivered', s => isDelivered(s) ? fmtUS(eta(s)) : ''], ['Notes', statusNotes],
-  ['Order', s => s.po, 'team'], ['Status', s => health(s).t, 'team'], ['Sails by', s => shipByDate(s) && !s.actual[2] ? fmtUS(shipByDate(s)) : '', 'team'], ['Factory PO', s => s.factoryPO || '', 'team'],
+  ['Rep', s => po(s.po).rep, 'team'], ['Order', s => s.po, 'team'], ['Status', s => health(s).t, 'team'], ['Sails by', s => shipByDate(s) && !s.actual[2] ? fmtUS(shipByDate(s)) : '', 'team'], ['Factory PO', s => s.factoryPO || '', 'team'],
   ['Booking', s => (s.booking && s.booking.ref) || '', 'team'], ['Container', s => (s.booking && s.booking.container) || '', 'team'],
 ];
 const openShipsOf = custId => pos.filter(p => p.customer === custId).flatMap(p => shipsOf(p.id)).filter(s => !isDelivered(s));
 const statusCols = who => STATUS_COLS.filter(col => who === 'team' || col[2] !== 'team');
-const statusRows = custId => [...openShipsOf(custId)].sort((a, b) => po(a.po).rep.localeCompare(po(b.po).rep) || (a.needBy || '9').localeCompare(b.needBy || '9'));
-const statusFile = (c, who) => `${c.name} Open Order Status ${fmtUS(TODAY).replace(/\//g, '.')}${who === 'team' ? ' (team)' : ''}.csv`.replace(/[\\/:*?"<>|]/g, '');
+const statusRows = custId => [...openShipsOf(custId)].sort((a, b) => (a.needBy || '9').localeCompare(b.needBy || '9'));
+const statusPeople = custId => [...new Set(statusRows(custId).map(s => reviewerOf(po(s.po))))].filter(Boolean);
+const statusTabs = custId => {
+  const rows = statusRows(custId);
+  const tabFor = ct => ({ name:ct.name, rows:rows.filter(s => reviewerOf(po(s.po)) === ct).sort((a, b) => po(a.po).job.localeCompare(po(b.po).job)) });
+  return [{ name:'Summary', rows }, ...statusPeople(custId).map(tabFor)];
+};
+const withJobGaps = tab => tab.name === 'Summary' ? tab.rows : tab.rows.flatMap((s, i) => i && tab.rows[i - 1].po !== s.po ? [null, s] : [s]);
+const statusFile = (c, who) => `${c.name} Open Order Status ${fmtUS(TODAY).replace(/\//g, '.')}${who === 'team' ? ' (team)' : ''}.xlsx`.replace(/[\\/:*?"<>|]/g, '');
 const statusDue = c => c.onboarded && openShipsOf(c.id).length && (!c.statusSent || diffDays(TODAY, c.statusSent) >= C.standingEmailDays);
-const csvCell = v => { const t = String(v ?? ''); return /[",\n]/.test(t) ? `"${t.replace(/"/g, '""')}"` : t; };
-function statusCsv(custId, who) { const cols = statusCols(who); return [cols.map(col => col[0]), ...statusRows(custId).map(s => cols.map(col => col[1](s)))].map(r => r.map(csvCell).join(',')).join('\n'); }
+/* An .xlsx is a zip of XML files; these are stored, not compressed. */
+const crc32 = bytes => { let crc = -1; bytes.forEach(b => { crc ^= b; for (let k = 0; k < 8; k++) crc = crc & 1 ? (crc >>> 1) ^ 0xEDB88320 : crc >>> 1; }); return (crc ^ -1) >>> 0; };
+function zipBlob(files, type) {
+  const enc = new TextEncoder(), u16 = n => [n & 255, n >>> 8 & 255], u32 = n => [...u16(n & 65535), ...u16(n >>> 16)], parts = [], dir = [];
+  let offset = 0;
+  files.forEach(([name, text]) => {
+    const nameBytes = enc.encode(name), data = enc.encode(text);
+    const common = [...u16(20), ...u16(0x800), ...u16(0), ...u16(0), ...u16(0x21), ...u32(crc32(data)), ...u32(data.length), ...u32(data.length), ...u16(nameBytes.length), ...u16(0)];
+    const local = Uint8Array.from([0x50, 0x4b, 3, 4, ...common]);
+    parts.push(local, nameBytes, data);
+    dir.push(Uint8Array.from([0x50, 0x4b, 1, 2, ...u16(20), ...common, ...u16(0), ...u16(0), ...u16(0), ...u32(0), ...u32(offset)]), nameBytes);
+    offset += local.length + nameBytes.length + data.length;
+  });
+  const dirSize = dir.reduce((sum, x) => sum + x.length, 0);
+  const end = Uint8Array.from([0x50, 0x4b, 5, 6, ...u16(0), ...u16(0), ...u16(files.length), ...u16(files.length), ...u32(dirSize), ...u32(offset), ...u16(0)]);
+  return new Blob([...parts, ...dir, end], { type });
+}
+const xmlEsc = t => String(t).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;');
+const XML_HEAD = '<?xml version="1.0" encoding="UTF-8" standalone="yes"?>', XL_NS = 'http://schemas.openxmlformats.org/spreadsheetml/2006/main', XL_REL = 'http://schemas.openxmlformats.org/officeDocument/2006/relationships', XL_PKG = 'http://schemas.openxmlformats.org/package/2006/relationships', XL_TYPE = 'application/vnd.openxmlformats-officedocument.spreadsheetml';
+const XL_STYLES = `${XML_HEAD}<styleSheet xmlns="${XL_NS}"><fonts count="2"><font><sz val="11"/><name val="Calibri"/></font><font><b/><sz val="11"/><name val="Calibri"/></font></fonts><fills count="2"><fill><patternFill patternType="none"/></fill><fill><patternFill patternType="gray125"/></fill></fills><borders count="1"><border><left/><right/><top/><bottom/><diagonal/></border></borders><cellStyleXfs count="1"><xf numFmtId="0" fontId="0" fillId="0" borderId="0"/></cellStyleXfs><cellXfs count="4"><xf numFmtId="0" fontId="0" fillId="0" borderId="0" xfId="0" applyAlignment="1"><alignment vertical="top"/></xf><xf numFmtId="0" fontId="1" fillId="0" borderId="0" xfId="0" applyFont="1"/><xf numFmtId="0" fontId="0" fillId="0" borderId="0" xfId="0" applyAlignment="1"><alignment vertical="top" wrapText="1"/></xf><xf numFmtId="3" fontId="0" fillId="0" borderId="0" xfId="0" applyNumberFormat="1" applyAlignment="1"><alignment vertical="top"/></xf></cellXfs><cellStyles count="1"><cellStyle name="Normal" xfId="0" builtinId="0"/></cellStyles></styleSheet>`;
+const XL_WIDTHS = { Customer:30, 'Job Name':34, 'Product (include spec)':34, Destination:28, Notes:90 };
+function sheetXml(tab, cols) {
+  const cell = (value, row, col, style) => {
+    const ref = `${String.fromCharCode(65 + col)}${row}`;
+    if (value === '' || value === null || value === undefined) return '';
+    return typeof value === 'number' ? `<c r="${ref}" s="3"><v>${value}</v></c>` : `<c r="${ref}" s="${style}" t="inlineStr"><is><t xml:space="preserve">${xmlEsc(value)}</t></is></c>`;
+  };
+  const styleOf = (row, col) => row === 1 ? 1 : cols[col][0] === 'Notes' ? 2 : 0;
+  const rows = [cols.map(col => col[0]), ...withJobGaps(tab).map(s => s && cols.map(col => col[1](s)))];
+  const data = rows.map((values, i) => values ? `<row r="${i + 1}">${values.map((v, c) => cell(v, i + 1, c, styleOf(i + 1, c))).join('')}</row>` : '').join('');
+  const widths = cols.map((col, c) => `<col min="${c + 1}" max="${c + 1}" width="${XL_WIDTHS[col[0]] || 14}" customWidth="1"/>`).join('');
+  return `${XML_HEAD}<worksheet xmlns="${XL_NS}"><sheetViews><sheetView workbookViewId="0"><pane ySplit="1" topLeftCell="A2" activePane="bottomLeft" state="frozen"/></sheetView></sheetViews><sheetFormatPr defaultRowHeight="15"/><cols>${widths}</cols><sheetData>${data}</sheetData></worksheet>`;
+}
+function statusWorkbook(custId, who) {
+  const tabs = statusTabs(custId), cols = statusCols(who);
+  const sheetName = t => xmlEsc(t.name.replace(/[\\/?*[\]:]/g, ' ').slice(0, 31));
+  return zipBlob([
+    ['[Content_Types].xml', `${XML_HEAD}<Types xmlns="http://schemas.openxmlformats.org/package/2006/content-types"><Default Extension="rels" ContentType="application/vnd.openxmlformats-package.relationships+xml"/><Default Extension="xml" ContentType="application/xml"/><Override PartName="/xl/workbook.xml" ContentType="${XL_TYPE}.sheet.main+xml"/><Override PartName="/xl/styles.xml" ContentType="${XL_TYPE}.styles+xml"/>${tabs.map((t, i) => `<Override PartName="/xl/worksheets/sheet${i + 1}.xml" ContentType="${XL_TYPE}.worksheet+xml"/>`).join('')}</Types>`],
+    ['_rels/.rels', `${XML_HEAD}<Relationships xmlns="${XL_PKG}"><Relationship Id="rId1" Type="${XL_REL}/officeDocument" Target="xl/workbook.xml"/></Relationships>`],
+    ['xl/workbook.xml', `${XML_HEAD}<workbook xmlns="${XL_NS}" xmlns:r="${XL_REL}"><bookViews><workbookView/></bookViews><sheets>${tabs.map((t, i) => `<sheet name="${sheetName(t)}" sheetId="${i + 1}" r:id="rId${i + 1}"/>`).join('')}</sheets></workbook>`],
+    ['xl/_rels/workbook.xml.rels', `${XML_HEAD}<Relationships xmlns="${XL_PKG}">${tabs.map((t, i) => `<Relationship Id="rId${i + 1}" Type="${XL_REL}/worksheet" Target="worksheets/sheet${i + 1}.xml"/>`).join('')}<Relationship Id="rId${tabs.length + 1}" Type="${XL_REL}/styles" Target="styles.xml"/></Relationships>`],
+    ['xl/styles.xml', XL_STYLES],
+    ...tabs.map((t, i) => [`xl/worksheets/sheet${i + 1}.xml`, sheetXml(t, cols)]),
+  ], `${XL_TYPE}.sheet`);
+}
+const givenName = ct => ct.name.split(' ')[0];
+const andList = a => a.length < 2 ? a.join('') : `${a.slice(0, -1).join(', ')} and ${a[a.length - 1]}`;
+const headedToSite = s => s.type === 'container' && !s.via && /^job site/i.test(s.dest) && !s.actual[3] && !!(s.actual[2] || s.booking);
+const siteLine = s => {
+  const p = po(s.po), ref = s.custPO || p.custPO, after = fmtUS(milestones(s)[3].date).replace(/\/\d{4}$/, '');
+  return `${p.jobNo ? `Job ${p.jobNo} ` : ''}${p.job} - ${s.name}${ref ? ` - PO ${ref}` : ''} - after ${after}`;
+};
+/* The report has always copied the rep on the job and the team's leads. */
+const statusCc = c => {
+  const primary = contactsOf(c.id).find(x => x.primary && x.status === 'active');
+  const names = [...(primary && !statusPeople(c.id).includes(primary) ? [primary.name] : []), ...statusRows(c.id).map(s => po(s.po).rep), TEAM.alan, TEAM.melissa];
+  return names.filter((n, i) => names.findIndex(x => x.split(' ')[0] === n.split(' ')[0]) === i);
+};
+function statusEmail(c) {
+  const people = statusPeople(c.id), rows = statusRows(c.id);
+  const perPerson = linesFor => people.map(ct => [ct, linesFor(ct)]).filter(x => x[1].length).map(([ct, lines]) => `${givenName(ct)}:\n${lines.join('\n')}`).join('\n\n');
+  const site = perPerson(ct => rows.filter(s => reviewerOf(po(s.po)) === ct && headedToSite(s)).map(siteLine));
+  const owed = perPerson(ct => jobsOnTab(ct).filter(p => stillNeeded(p).length).map(p => `${p.job}: ${stillNeeded(p).join(', ')}`));
+  const siteBlock = site ? `\n\nThe following purchase orders have departed or are going to be departing and are delivering direct to job sites. Please let me know as soon as possible if you cannot receive the container at the job site.\n\n${site}` : '';
+  const owedBlock = owed ? `\n\nWe are still missing the following:\n\n${owed}` : '';
+  return { to:people, cc:statusCc(c), subject:`Order Summary and Requests for ${fmtUS(TODAY).replace(/\//g, '.')}`,
+    body:`Hello ${andList(people.map(givenName))},\n\nPlease review all your jobs on your tab and email back with any changes.${siteBlock}${owedBlock}\n\nThanks,\n${TEAM[ME]}` };
+}
 function exportModal(c) {
   if (exportOpen !== c.id) return '';
-  const rows = statusRows(c.id), cols = statusCols('team'), pc = contactsOf(c.id).find(x => x.primary), reps = [...new Set(rows.map(s => po(s.po).rep))];
+  const tabs = statusTabs(c.id), tab = tabs[exportTab] || tabs[0], cols = statusCols('team'), mail = statusEmail(c), rows = tabs[0].rows;
   const num = col => col[0] === 'Quantity on PO' || col[0] === 'Cartons';
   const cell = (col, s) => `<td class="${num(col) ? 'num mono' : ''}" style="${col[0] === 'Notes' ? 'min-width:30rem;white-space:normal' : 'white-space:nowrap'}">${esc(num(col) && col[1](s) !== '' ? Number(col[1](s)).toLocaleString() : col[1](s))}</td>`;
-  const body = rows.length ? reps.map(r => `${reps.length > 1 ? `<tr><th colspan="${cols.length}" class="bg-body-tertiary">Rep · ${esc(r)}</th></tr>` : ''}${rows.filter(s => po(s.po).rep === r).map(s => `<tr>${cols.map(col => cell(col, s)).join('')}</tr>`).join('')}`).join('') : `<tr><td colspan="${cols.length}" class="text-center text-body-secondary py-4">No open shipments.</td></tr>`;
+  const body = tab.rows.length ? withJobGaps(tab).map(s => s ? `<tr>${cols.map(col => cell(col, s)).join('')}</tr>` : `<tr><td colspan="${cols.length}">&nbsp;</td></tr>`).join('') : `<tr><td colspan="${cols.length}" class="text-center text-body-secondary py-4">No open shipments.</td></tr>`;
   return `<div style="position:fixed;inset:0;background:rgba(0,0,0,.55);z-index:1080;display:flex;align-items:flex-start;justify-content:center;padding:40px 16px;overflow:auto;text-align:left" onclick="if(event.target===this)act.exportPreview('${c.id}')"><div class="detail-card" style="max-width:1440px;width:100%;margin:0">
     <div class="detail-card-header"><h3>Open order status · ${esc(c.name)}</h3><span class="card-note">${rows.length} shipment${rows.length === 1 ? '' : 's'} not yet delivered · as of ${fmtLong(TODAY)} · ${c.statusSent ? `last sent ${fmt(c.statusSent)}` : 'never sent'} · every ${C.standingEmailDays} days</span></div>
+    <div class="detail-card-body"><div class="email"><div class="hd">To: ${esc(mail.to.map(x => x.name).join(', ') || 'no contact on file')} · Cc: ${esc(mail.cc.join(', '))} · Subject: ${esc(mail.subject)} · Attached: ${esc(statusFile(c, 'customer'))}</div><div style="white-space:pre-line">${esc(mail.body)}</div></div></div>
+    <ul class="nav nav-tabs px-3">${tabs.map((t, i) => `<li class="nav-item"><button type="button" class="nav-link ${t === tab ? 'active' : ''}" onclick="act.exportTab(${i})">${esc(t.name)} <span class="badge bg-secondary bg-opacity-10 text-secondary">${t.rows.length}</span></button></li>`).join('')}</ul>
     <div class="detail-card-body flush"><div class="table-responsive"><table class="table table-sm mb-0" style="font-size:12px"><thead><tr>${cols.map(col => `<th class="${num(col) ? 'num' : ''}">${esc(col[0])}${col[2] === 'team' ? ' <span class="text-body-secondary fw-normal" title="Left out of the customer copy">*</span>' : ''}</th>`).join('')}</tr></thead><tbody>${body}</tbody></table></div></div>
-    <div class="detail-card-footer d-flex justify-content-between align-items-center gap-2 flex-wrap"><span>Annalisa's format. * Team copy only. The notes come from the order record; nobody types them.</span><div class="d-flex gap-2 flex-wrap"><button class="btn btn-sm btn-outline-secondary" onclick="act.exportPreview('${c.id}')">Close</button><button class="btn btn-sm btn-outline-secondary" onclick="act.exportDownload('${c.id}', 'team')"><i class="bi bi-download me-1"></i>Team copy (CSV)</button><button class="btn btn-sm btn-outline-secondary" onclick="act.exportDownload('${c.id}', 'customer')"><i class="bi bi-download me-1"></i>Customer copy (CSV)</button><button class="btn btn-sm btn-primary" onclick="act.statusSend('${c.id}')" ${pc && rows.length ? '' : 'disabled'}><i class="bi bi-send me-1"></i>Email to ${pc ? esc(pc.name.split(' ')[0]) : 'contact'}</button></div></div>
+    <div class="detail-card-footer d-flex justify-content-between align-items-center gap-2 flex-wrap"><span>* Team copy only. The notes come from the order record. Order notes stay internal.</span><div class="d-flex gap-2 flex-wrap"><button class="btn btn-sm btn-outline-secondary" onclick="act.exportPreview('${c.id}')">Close</button><button class="btn btn-sm btn-outline-secondary" onclick="act.exportDownload('${c.id}', 'team')"><i class="bi bi-download me-1"></i>Team copy (Excel)</button><button class="btn btn-sm btn-outline-secondary" onclick="act.exportDownload('${c.id}', 'customer')"><i class="bi bi-download me-1"></i>Customer copy (Excel)</button><button class="btn btn-sm btn-primary" onclick="act.statusSend('${c.id}')" ${mail.to.length && rows.length ? '' : 'disabled'}><i class="bi bi-send me-1"></i>Email to ${mail.to.length ? esc(andList(mail.to.map(givenName))) : 'contact'}</button></div></div>
   </div></div>`;
 }
 const newThreadId = () => 'T' + (Math.max(...threads.map(t => Number(t.id.slice(1)))) + 1);
 Object.assign(act, {
-  exportPreview(custId) { exportOpen = exportOpen === custId ? null : custId; render(); },
+  exportPreview(custId) { exportOpen = exportOpen === custId ? null : custId; exportTab = 0; render(); },
+  exportTab(i) { exportTab = i; render(); },
   exportDownload(custId, who) {
     const name = statusFile(cust(custId), who);
-    const a = document.createElement('a'); a.href = URL.createObjectURL(new Blob([statusCsv(custId, who)], { type:'text/csv' })); a.download = name; document.body.appendChild(a); a.click(); a.remove(); setTimeout(() => URL.revokeObjectURL(a.href), 1000);
+    const a = document.createElement('a'); a.href = URL.createObjectURL(statusWorkbook(custId, who)); a.download = name; document.body.appendChild(a); a.click(); a.remove(); setTimeout(() => URL.revokeObjectURL(a.href), 1000);
     toast(`<b>Downloaded</b> ${esc(name)}: ${openShipsOf(custId).length} open shipments.`);
   },
+  setReviewer(poId, id) { const p = po(poId), ct = contact(id); p.reviewer = id; p.activity.push([iso(TODAY), `Moved to ${ct.name}'s tab of the open order status.`]); toast(`<b>${esc(p.job)}</b> is now on ${esc(ct.name)}'s tab of the open order status.`); },
   statusSend(custId) {
-    const c = cust(custId), pc = contactsOf(c.id).find(x => x.primary), rows = statusRows(c.id), orders = [...new Set(rows.map(s => s.po))], stamp = nowStamp();
-    if (!pc) { toast('No primary contact to send to.'); return; }
-    const subject = `${c.name} open order status ${fmtUS(TODAY)}`;
-    const body = `Hi ${pc.name.split(' ')[0]},\n\nAttached is your open order status as of ${fmtLong(TODAY)}: ${rows.length} shipment${rows.length === 1 ? '' : 's'} across ${orders.length} order${orders.length === 1 ? '' : 's'}.\n\nPlease look over the need by dates and reply with anything that has moved. Whatever you send back becomes a change request on the order, and the notes column carries forward to next week.\n\n${TEAM[ME]}`;
-    threads.unshift({ id:newThreadId(), subject, company:c.id, contact:pc.id, assignee:ME, status:'awaiting', unread:false, custSeen:false, msgs:[['us', stamp, body, [statusFile(c, 'customer')], `${TEAM[ME]} · open order status`], ['system', stamp, `Sent to ${pc.name}. A reply that changes a date opens a change request; the next one goes in ${C.standingEmailDays} days.`]] });
+    const c = cust(custId), mail = statusEmail(c), rows = statusRows(c.id), orders = [...new Set(rows.map(s => s.po))], stamp = nowStamp(), who = andList(mail.to.map(x => x.name));
+    if (!mail.to.length) { toast('No contact to send to.'); return; }
+    threads.unshift({ id:newThreadId(), subject:mail.subject, company:c.id, contact:mail.to[0].id, assignee:ME, status:'awaiting', unread:false, custSeen:false, msgs:[['us', stamp, mail.body, [statusFile(c, 'customer')], `${TEAM[ME]} · open order status`], ['system', stamp, `Sent to ${who}, copying ${mail.cc.join(', ')}. A reply that changes a date opens a change request; the next one goes in ${C.standingEmailDays} days.`]] });
     c.statusSent = iso(TODAY); done.add('status-' + c.id);
-    orders.forEach(poId => { const n = rows.filter(s => s.po === poId).length; po(poId).activity.push([iso(TODAY), `Open order status sent to ${pc.name} (${n} shipment${n === 1 ? '' : 's'} on this order).`]); });
-    exportOpen = null; toast(`<b>Sent.</b> ${esc(subject)} emailed to ${esc(pc.name)} with the CSV attached. The thread is in Chats, awaiting reply.`); render();
+    orders.forEach(poId => { const n = rows.filter(s => s.po === poId).length, rv = reviewerOf(po(poId)); po(poId).activity.push([iso(TODAY), `Open order status sent to ${rv ? rv.name : who} (${n} shipment${n === 1 ? '' : 's'} on this order).`]); });
+    exportOpen = null; toast(`<b>Sent.</b> ${esc(mail.subject)} emailed to ${esc(who)} with the workbook attached. The thread is in Chats, awaiting reply.`); render();
   },
   notifyUnreachable(sid) {
     const s = ship(sid), p = po(s.po), c = cust(p.customer), pc = contactsOf(c.id).find(x => x.primary), cr = vendor(s.appt.carrier), who = s.delivery.name.split(',')[0], stamp = nowStamp();
@@ -1690,9 +1782,11 @@ function viewContact(id, tab) {
   const acts = feedEvents().filter(e => e.who.includes(ct.name));
   const tabList = [...(isCust ? [['orders', cp.length]] : []), ['changes', cos.length, warnIf(cos.some(x => x.status === 'pending'))], ['chats', ths.length, warnIf(ths.some(t => t.status === 'open'))], ['activity', acts.length]];
   tab = tabList.some(t => t[0] === tab) ? tab : tabList[0][0];
+  const tabJobs = isCust ? jobsOnTab(ct).map(p => p.job) : [];
+  const tabNote = tabJobs.length ? `${tabJobs.join(', ')} on their tab of the open order status` : '';
   const banner = ct.status === 'left' ? `<div class="status-banner danger"><i class="bi bi-person-x"></i><span><strong>No longer at ${esc(co.name)}.</strong> ${esc(ct.note || '')}</span></div>`
-    : ct.primary ? `<div class="status-banner active"><i class="bi bi-person-check"></i><span><strong>Primary contact</strong> for ${esc(co.name)}. ${isCust ? 'Gets open order status emails, reminders and departure notices.' : 'Gets booking requests, status checks and lead-time questions.'}</span></div>`
-    : `<div class="status-banner info"><i class="bi bi-person"></i><span>Gets only the threads they start. Make them primary to send them open order status emails and reminders.</span></div>`;
+    : ct.primary ? `<div class="status-banner active"><i class="bi bi-person-check"></i><span><strong>Primary contact</strong> for ${esc(co.name)}. ${isCust ? `Gets reminders and departure notices${tabNote ? `, and ${esc(tabNote)}` : ''}.` : 'Gets booking requests, status checks and lead-time questions.'}</span></div>`
+    : `<div class="status-banner info"><i class="bi bi-person"></i><span>${tabNote ? `Gets ${esc(tabNote)}, and the threads they start.` : 'Gets only the threads they start.'} Make them primary to send them reminders.</span></div>`;
   const tabs = showTabs(`contact-${id}`, tabList, tab);
   const tools = { orders: `<a class="btn btn-sm btn-outline-secondary" href="${companyLink(co)}">Open ${esc(co.name.split(' ')[0])}</a>`, changes: `<a class="btn btn-sm btn-outline-secondary" href="#changes">All change requests</a>`, chats: `<a class="btn btn-sm btn-outline-secondary" href="#chats-open">All chats</a>`, activity: `<a class="btn btn-sm btn-outline-secondary" href="#feed">Open the feed</a>` }[tab];
   const main = tab === 'changes' ? listCard(cos.map(x => coRow(x)), `No change requests from ${esc(first)}.`)
@@ -1706,7 +1800,7 @@ function viewContact(id, tab) {
         <li class="meta-item"><span class="meta-label">Company</span><span class="meta-value"><a href="${companyLink(co)}">${esc(co.name)}</a><div class="fw-normal text-body-secondary">${companyRoles(co).join(', ')}</div></span></li>
         <li class="meta-item"><span class="meta-label">Email</span><span class="meta-value mono">${esc(ct.email)}</span></li>
         <li class="meta-item"><span class="meta-label">Phone</span><span class="meta-value mono">${ct.phone ? esc(ct.phone) : '—'}</span></li>
-        <li class="meta-item"><span class="meta-label">Receives</span><span class="meta-value">${ct.primary ? (isCust ? 'Open order status emails, reminders, departure notices' : 'Booking requests, status checks') : 'Only threads they started'}</span></li></ul>`)}
+        <li class="meta-item"><span class="meta-label">Receives</span><span class="meta-value">${ct.primary ? (isCust ? `${tabJobs.length ? 'Open order status, reminders' : 'Reminders'}, departure notices` : 'Booking requests, status checks') : tabJobs.length ? 'Open order status, threads they started' : 'Only threads they started'}</span></li></ul>`)}
       <div class="detail-card"><div class="detail-card-header"><h3>Others at ${esc(co.name.split(' ')[0])}</h3></div><ul class="action-list">${contactsOf(co.id).filter(x => x.id !== id).map(x => contactRow(x)).join('') || '<li class="empty">No one else on file.</li>'}</ul></div>
     </div></div>`;
 }
@@ -1797,7 +1891,7 @@ function viewContacts(tab) {
   if (T.contactSort === 'company') rows.sort((a, b) => company(a.company).name.localeCompare(company(b.company).name));
   const tools = searchBox('Search contacts…') + filterTool('contactFilter', [['all','All contacts'],['primary','Primary only'],['left','Left their company']]) + sortTool('contactSort', [['default','Default order'],['name','Name A–Z'],['company','Company A–Z']]);
   const tabs = tabsUl(CONTACT_TABS.map(t => [t[0], t[1], t[0] === 'contacts' ? contacts.length : contacts.filter(ct => (t[0] === 'contacts-vendors') === isVendorContact(ct)).length]), tab ? 'contacts-' + tab : 'contacts');
-  const desc = { customers:'People at the companies that buy from us. The primary contact gets open order status emails, reminders, and departure notices.', vendors:'People at factories, forwarders, carriers, and warehouses. Booking requests and lead-time changes go through them.' }[tab] || 'The people behind every company: who to email, who gave which date, and who has left. Turnover at big customers is why a date is tied to a person.';
+  const desc = { customers:'People at the companies that buy from us. The primary contact gets reminders and departure notices. Whoever answers for a job reviews it on their tab of the open order status.', vendors:'People at factories, forwarders, carriers, and warehouses. Booking requests and lead-time changes go through them.' }[tab] || 'The people behind every company: who to email, who gave which date, and who has left. Turnover at big customers is why a date is tied to a person.';
   return pageHeader('Contacts', 'People at your customers and vendors.', `<button class="btn btn-primary btn-sm" onclick="act.stub('<b>Prototype.</b> New contact form would open here.')"><i class="bi bi-plus-lg me-1"></i> New contact</button>`) + pageNav(tabs, tools) + tabDesc(desc) +
   `<div class="data-table-wrapper"><div class="table-responsive"><table class="table table-hover"><thead><tr><th>Name</th><th>Company</th><th>Title</th><th>Email</th><th>Phone</th><th>Status</th></tr></thead><tbody>
     ${rows.map(ct => { const co = company(ct.company); return `<tr class="link" onclick="go('contact-${ct.id}')"><td class="item-name"><a href="#contact-${ct.id}">${esc(ct.name)}</a>${ct.primary ? '<div class="item-sub">Primary contact</div>' : ''}</td><td><a href="${companyLink(co)}" class="text-decoration-none">${esc(co.name)}</a><div class="item-sub">${companyRoles(co).join(', ')}</div></td><td>${esc(ct.title)}</td><td class="mono">${esc(ct.email)}</td><td class="mono">${ct.phone ? esc(ct.phone) : '—'}</td><td>${ct.status === 'left' ? sb('danger', 'Left') : sb('active', 'Active')}</td></tr>`; }).join('')}
